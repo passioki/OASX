@@ -1518,30 +1518,37 @@ class TaskListController extends GetxController with LogMixin {
             })
         .toList();
 
-    // ★★★ S7: 「休息」条目**恒排最后**（用户确认的唯一硬约束）★★★
+    // ★★★ P-2: 「休息」**不再垫底** —— 它就是临时任务（用户裁定）★★★
     //
-    // 用户原话: "**任意拖，但「休息」条目仍强制排最后**"
+    // ## 用户的定义（第三次提出, 以此为准）
     //
-    // 理由是它会**阻塞列表**（跑完前面的才继续）—— 放在中间会把
-    // 它后面的任务全挡住。
+    // > **休息就是临时任务**（回庭院待着），只不过**可以选择被定时任务插队**。
     //
-    // ★ 这里是**归一化**（把它挪到最后）而不是**拒绝**:
-    //   用户把它拖到哪都接受, 只是落库时归位。
-    // ★ 后端 `Config.place_rest_last()` 会**再兜一次**
-    //   （防止别的客户端或直接调 API 绕过）。
-    // ★ 用 `List.sort` 是**稳定**的吗? Dart 的 `List.sort` **不保证稳定** ——
-    //   所以这里用**两趟过滤**（先任务、后休息）, 天然保序。
-    final tasks = rebuilt
-        .where((e) => '${e['kind']}' == 'task')
-        .toList();
-    final rests = rebuilt
-        .where((e) => '${e['kind']}' != 'task')
-        .toList();
-
+    // ⇒ 休息与其它**临时任务同一套规则**：没有"恒排最后"、没有特殊段名、
+    //   没有特殊 rank、**可自由拖动**。
+    //   唯一特殊性 = **可被定时任务插队**（`rest_interleave`, 一个**可选能力**）。
+    //
+    // ## 这里原来是什么（★ 就是"松手弹回"的根因）
+    //
+    // ```dart
+    // final tasks = rebuilt.where((e) => '${e['kind']}' == 'task').toList();
+    // final rests = rebuilt.where((e) => '${e['kind']}' != 'task').toList();
+    // entries..clear()..addAll(tasks)..addAll(rests);   // ★ 任务在前、休息垫底
+    // ```
+    //
+    // ★ 注释当时写"用户确认: 任意拖，但「休息」条目仍强制排最后" ——
+    //   **那句话不是用户的裁定**，是误记的临时约束。
+    //   于是**无论用户把休息拖到哪，保存时都被挪到末尾** —— 用户实测
+    //   "能拖，但松手弹回最后"。
+    //
+    // ★ 后端 `Config.place_rest_last()` 也曾有同样的归一化，现已改为**直通**
+    //   （OAS `832f467e`）。★ 实测后端 `PUT /run_list` 已能正确保存
+    //   休息的**任意位置**（含中间）。
+    //
+    // ⚠ 所以现在**两边都不再挪位**，用户拖到哪就存到哪。
     entries
       ..clear()
-      ..addAll(tasks)
-      ..addAll(rests);
+      ..addAll(rebuilt);
     update();
     _saveEntries();
   }
