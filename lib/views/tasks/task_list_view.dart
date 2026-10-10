@@ -670,68 +670,15 @@ mixin _GlobalPanelMixin {
               onChanged: c.toggleEnableTimed,
             ),
             const SizedBox(height: 4),
-            // ★★★ S7: **「调度优先级」下拉已删除, 改成两个排序按钮** ★★★
+            // ★★★ S7: 「快捷排序」按钮**已移走**（用户要求）★★★
             //
-            // ## 用户原话
+            // 用户原话: "**快捷排序应该和执行顺序在同一个 tab 里**。"
             //
-            // > "我觉得……这个**固定任务优先和定时任务优先以及不能跨类别
-            // >  拖动太蠢了**。我只需要保持**可以自由拖动/改变执行顺序**就行,
-            // >  固定任务优先和定时任务优先**直接作为一个快捷排序**就好,
-            // >  而不是定义一些没有意义的不能跨类别拖动以及**单独的调度优先级**。"
-            //
-            // ## 为什么改成按钮
-            //
-            // 旧设计是一个**状态**（`priority_mode`）: 一旦设定, 每次
-            // `build_queue()` 都按它排, 而且**限制拖动范围**。
-            // ★ 新设计是**一个动作**: 点一下, 排一次, **不留状态**。
-            //   排完之后队列就是新顺序, 用户**可以随意再拖**（跨类别也行）。
-            //
-            // ★ 所以这里把"下拉（选一个模式）"换成"两个按钮（做一次排序）"。
-            //   ★ 界面语言也随之改变: 不再说"当前是什么模式", 而是
-            //     "按什么排一下"。
-            Row(
-              children: [
-                const SizedBox(
-                  width: 168,
-                  child: Text('快捷排序'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: c.sortingQueue
-                      ? null
-                      : () => c.sortQueueBy('timed'),
-                  icon: const Icon(Icons.schedule, size: 16),
-                  label: const Text('定时排前面'),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed: c.sortingQueue
-                      ? null
-                      : () => c.sortQueueBy('fixed'),
-                  icon: const Icon(Icons.push_pin, size: 16),
-                  label: const Text('固定排前面'),
-                ),
-                const SizedBox(width: 8),
-                // ★ 说清"拖动永远自由" —— 这正是用户抱怨的点
-                const Tooltip(
-                  message: '执行顺序**完全按你拖的顺序**跑 ——\n'
-                      '所有条目都能互相拖动（不限类别）。\n'
-                      '上面两个按钮只是**帮你排一次**, 不会限制你之后怎么拖。',
-                  child: Chip(
-                    label: Text('可自由拖动'),
-                    visualDensity: VisualDensity.compact,
-                  ),
-                ),
-              ],
-            ),
-            const Padding(
-              padding: EdgeInsets.only(left: 168, top: 2),
-              child: Text(
-                '★ 这两个按钮只是**排一次序**（定时/固定谁在前面）。'
-                '排完之后你仍然可以**任意拖动**，不限类别。\n'
-                '唯一固定的是「休息」条目 —— 它总是排在最后。',
-                style: TextStyle(fontSize: 11, color: Colors.black54),
-              ),
-            ),
+            // ★ 它原来在这里（全局设置区, 属于「调度」tab）—— 而
+            //   「执行顺序」在「**执行队列**」tab 里。两者分在两个 tab
+            //   是**找不到**的, 用户反馈过。
+            // ★ 现在它由 `_sortActions(c)` 渲染, 位置在 `_QueueTab`
+            //   的**最上方**（在 `QueuePanel` 之前）, 与执行顺序同屏。
             _switchRow(
               context,
               key: 'rest_interleave',
@@ -1398,12 +1345,71 @@ class _QueueTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
       children: [
+        // ★★★ S7: **快捷排序**（用户要求: 与执行顺序**同一个 tab**）★★★
+        //
+        // 用户原话:
+        // > "**快捷排序应该和执行顺序在同一个 tab 里**。"
+        //
+        // ★ 它原来在「调度」tab 的全局设置区 —— 而「执行顺序」（可拖
+        //   列表）在「执行队列」tab。**分在两个 tab = 找不到**。
+        // ★ 现在放在本 tab 最上方（`QueuePanel` 之前）, 与执行顺序同屏。
+        _sortActions(c),
+        const Divider(height: 16),
+
         // 队列本体 —— 含 调度器/正在运行 · 执行顺序(拖拽) · 待执行 · 等待中
         //
         // ★ 这里**不放** `_monitorStrip` —— 它是 `_ScheduleTab` 的方法,
         //   而且队列自己的"待执行 N / 等待中 N"就在下面（那才是明细）。
         QueuePanel(controller: c),
       ],
+    );
+  }
+
+  /// ★ **快捷排序**（两个按钮）—— 与执行顺序同屏。
+  ///
+  /// ## 用户裁定（唯一依据）
+  ///
+  /// > "固定任务优先和定时任务优先以及**不能跨类别拖动太蠢了**。
+  /// >  我只需要保持**可以自由拖动/改变执行顺序**就行, 固定任务优先和
+  /// >  定时任务优先**直接作为一个快捷排序**就好, 而不是定义一些没有
+  /// >  意义的不能跨类别拖动以及**单独的调度优先级**。"
+  ///
+  /// ★ **它是一个动作, 不是一个状态**: 点一下, 排一次, 不留状态。
+  ///   排完之后用户可以**随意再拖**（跨类别也行）。
+  Widget _sortActions(TaskListController c) {
+    // ⚠ 这里**不能**用 `.padding(...)`（`styled_widget` 的扩展）——
+    //   本文件**没有** import 它, 会报 `undefined_method`。
+    //   用原生 `Padding` 包一层。
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          const SizedBox(width: 168, child: Text('快捷排序')),
+          OutlinedButton.icon(
+            onPressed: c.sortingQueue ? null : () => c.sortQueueBy('timed'),
+            icon: const Icon(Icons.schedule, size: 16),
+            label: const Text('定时排前面'),
+          ),
+          const SizedBox(width: 8),
+          OutlinedButton.icon(
+            onPressed: c.sortingQueue ? null : () => c.sortQueueBy('fixed'),
+            icon: const Icon(Icons.push_pin, size: 16),
+            label: const Text('固定排前面'),
+          ),
+          const SizedBox(width: 8),
+          const Tooltip(
+            message: '★ 这两个按钮只是**排一次序**（定时 / 固定谁在前面）。\n'
+                '排完之后**所有条目仍然可以任意拖动**，不限类别。\n'
+                '唯一固定的是「休息」条目 —— 它总是排在最后。',
+            child: Chip(
+              // ★ 文案要让"拖动自由"**看得见**（不能只藏在 Tooltip 里）——
+              //   用户抱怨的正是"拖不动 / 不知道为什么"。
+              label: Text('排一次 · 之后随便拖'),
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

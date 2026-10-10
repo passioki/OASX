@@ -10,6 +10,11 @@ import 'package:flutter_form_builder/flutter_form_builder.dart';
 import 'package:oasx/api/api_client.dart';
 import 'package:oasx/views/layout/appbar.dart';
 import 'package:oasx/utils/platform_utils.dart';
+// 「双击启动」要**先拉起后端**再自动登录, 后端归 ServerController 管。
+// SettingsController 只用来挡一层"环境没就绪" —— 它由 main.dart 的
+// GetMaterialApp.onInit 提前注册, 见 login_controller.dart 的说明。
+import 'package:oasx/controller/settings.dart';
+import 'package:oasx/views/server/server_view.dart' show ServerController;
 
 part './login_binding.dart';
 part '../../controller/login/login_controller.dart';
@@ -22,8 +27,8 @@ class LoginView extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: buildPlatformAppBar(context, isCollapsed: false),
-      floatingActionButton: PlatformUtils.isWindows ? _serverButton() : null,
-      // floatingActionButtonLocation: FloatingActionButtonLocation.centerTop,
+      // 「服务器设置」按钮原来浮在这里(floatingActionButton), 现在跟着表单
+      // 落在 Login 按钮下面 —— 见 _serverButton()。
       body: _login(context),
     );
   }
@@ -42,7 +47,8 @@ class LoginView extends StatelessWidget {
         _address(),
         _username(),
         _password(),
-        _signin()
+        _signin(),
+        _serverButton(),
       ].toColumn(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisAlignment: MainAxisAlignment.center),
@@ -121,12 +127,24 @@ class LoginView extends StatelessWidget {
     ).padding(horizontal: 20, top: 40);
   }
 
+  /// 「服务器设置」入口 —— 原来是 Scaffold **右下角**的 FloatingActionButton。
+  ///
+  /// 移到 Login 按钮**下面**: 后端没起来时用户得先在这里配好 OAS 根目录,
+  /// 它属于**启动流程**的一部分, 跟着表单走比浮在角落里更容易被发现。
+  ///
+  /// 只在 Windows 显示 —— `/server` 页(拉起本地 OAS 后端 / 改 deploy.yaml /
+  /// 看启动日志)只对 Windows 上的本地后端有意义。
   Widget _serverButton() {
-    return FloatingActionButton(
-        heroTag: 'SERVER',
-        child: const Icon(Icons.developer_board_rounded),
-        onPressed: () {
-          Get.toNamed('/server');
-        });
+    if (!PlatformUtils.isWindows) {
+      return const SizedBox.shrink();
+    }
+    // 外层 Column 是 CrossAxisAlignment.stretch, 所以它和 Login 按钮**同宽**。
+    return OutlinedButton.icon(
+      onPressed: () {
+        Get.toNamed('/server');
+      },
+      icon: const Icon(Icons.developer_board_rounded),
+      label: const Text('服务器设置'),
+    ).padding(horizontal: 20, top: 12);
   }
 }

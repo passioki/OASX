@@ -61,36 +61,48 @@ class ApiClient {
   }
 
   /// common request method
-  Future<ApiResult<T>> request<T>(Future<Result<T>> Function() apiFn) async {
+  ///
+  /// [silent] = true 时**网络失败只打日志、不弹提示**。
+  /// 给"启动时轮询等后端起来"用(见 `LoginController.ensureBackendThenAutoLogin`):
+  /// 后端冷启动要 10-30 秒, 每 500ms 探一次, 若每次都弹就成刷屏了。
+  Future<ApiResult<T>> request<T>(Future<Result<T>> Function() apiFn,
+      {bool silent = false}) async {
     try {
       final res = await apiFn();
       return res.when(
         success: (data) => ApiResult.success(data),
         failure: (msg, code) {
           printError(info: '${I18n.network_error_code}: $msg | $code'.tr);
-          switch (code) {
-            case 403:
-              break;
-            case 404:
-              showNetErrCodeSnackBar(I18n.network_not_found.tr, code);
-              break;
-            default:
-              showNetErrCodeSnackBar(msg, code);
-              break;
+          if (!silent) {
+            switch (code) {
+              case 403:
+                break;
+              case 404:
+                showNetErrCodeSnackBar(I18n.network_not_found.tr, code);
+                break;
+              default:
+                showNetErrCodeSnackBar(msg, code);
+                break;
+            }
           }
           return ApiResult.failure(msg, code);
         },
       );
     } catch (e) {
       printError(info: '${I18n.network_error.tr}: $e');
-      showNetErrSnackBar();
+      if (!silent) {
+        showNetErrSnackBar();
+      }
       return ApiResult.failure(e.toString());
     }
   }
 
 // ----------------------------------   服务端地址测试   ----------------------------------
-  Future<bool> testAddress() async {
-    final res = await request(() => get('/test'));
+  /// 探测后端是否可达(`GET /test`)。
+  ///
+  /// [silent] = true 时失败不弹提示(见 [request])。
+  Future<bool> testAddress({bool silent = false}) async {
+    final res = await request(() => get('/test'), silent: silent);
     return res.isSuccess && res.data == 'success';
   }
 
@@ -672,12 +684,14 @@ class ApiClient {
 
   void showNetErrSnackBar() {
     Get.snackbar(I18n.network_error.tr, I18n.network_connect_timeout.tr,
-        duration: const Duration(seconds: 2));
+        duration: const Duration(seconds: 2),
+        snackPosition: SnackPosition.BOTTOM);
   }
 
   void showNetErrCodeSnackBar(String msg, int code) {
     Get.snackbar(
         I18n.network_error.tr, '${I18n.network_error_code.tr}: $code | $msg',
-        duration: const Duration(seconds: 2));
+        duration: const Duration(seconds: 2),
+        snackPosition: SnackPosition.BOTTOM);
   }
 }
