@@ -1887,10 +1887,12 @@ class _QueueTab extends StatelessWidget {
           //   现在只留一个小图标, 文字进 `Tooltip`。
           // ★ 与本项目既有惯例一致（`window_editor` 里注着
           //   "说明走 Tooltip（用户要求括号改悬停）"）。
+          // ★★ P-2: 那句"唯一固定的是「休息」条目 —— 它总是排在最后"
+          //    已**不成立**（用户裁定, 见 OAS `832f467e`）。★★
           const Tooltip(
             message: '★ 这两个按钮只是**排一次序**（周期 / 临时谁在前面）。\n'
-                '排完之后**所有条目仍然可以任意拖动**，不限类别。\n'
-                '唯一固定的是「休息」条目 —— 它总是排在最后。',
+                '排完之后**所有条目仍然可以任意拖动**，不限类别 ——\n'
+                '**包括「休息」**（它拖到中间时, 后面的任务会等它结束再跑）。',
             child: Icon(Icons.help_outline, size: 17),
           ),
           const SizedBox(width: 8),

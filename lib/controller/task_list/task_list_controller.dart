@@ -1182,23 +1182,31 @@ class TaskListController extends GetxController with LogMixin {
         //   **派生**结果（后端 `_segment_queue()` 刻意**不回写**配置）。
         //   所以前端按**同一规则**自己算。
         //
-        // ★★ 第二轮复审修复: **`rest` 必须打 `'__rest__'`, 不能走
-        //    `priorityGroupOf('')`** ★★
+        // ★★★ P-2: `rest` **不再特殊标记**（用户裁定）★★★
         //
-        // 复审员实测: `priorityGroupOf('')` 会**直接返回 `'fixed'`**
-        // （它开头就有"空任务名 -> fixed"的兜底）—— 于是
-        // `_sameGroupReorder` 里那个 `g == '__rest__' -> rank 2` 的
-        // 分支**永远不可达**, `rest` 被当成 **fixed** 参与排序。
+        // ## 曾经为什么打 `'__rest__'`
         //
-        // 后果: 把「休息」往上拖时, 前端算出单调 rank -> **放行**;
-        // 而后端 `_check_drag_allowed` 明确要求"rest 必须在所有任务之后"
-        // -> **拒绝**。==> **前端放行、后端拒绝**（正是用户 ③ 的
-        // "拖了→界面动了→闪回 + 保存失败"）。
+        // 后端当时有硬约束「rest 必须在所有任务之后」。前端为了让**拒绝**
+        // 发生在拖动**之前**，给 rest 打了 `'__rest__'`，再由
+        // `_sameGroupReorder` 的 `'__rest__' -> rank 2` 分支算单调 rank。
         //
-        // ★ 修法: `rest`（`task` 为空）**显式**打 `'__rest__'`,
-        //   与后端 `_segment_queue()` 的 `'__rest__'` **同一个标记**。
+        // ## 现在为什么删掉
+        //
+        // 用户裁定:
+        // > "休息**也是任务**, 只不过可以选择插入定时任务。"
+        // > "休息当然就是**挡住后边的**, 本质为了**防封**, **符合预期**。"
+        // > "1 **全删**"（`'__rest__'` 特殊标记）
+        //
+        // ★ 后端 `_tag_and_place_rest()` 的排序与 `place_rest_last()` 都已
+        //   **改为直通**（见 OAS 提交 `832f467e`）；且 `_sameGroupReorder`
+        //   与 `_check_drag_allowed` **早已删除**（见本文件 L1541 的记载）——
+        //   ⇒ 这个标记**不再有任何约束作用**，只剩显示噪音。
+        //
+        // ⚠ 也不能退回 `priorityGroupOf('')` —— 它有"空任务名 -> fixed"的
+        //   兜底，会让 rest 被渲染成**临时任务的类别色条**。
+        //   ★ 所以显式给**空段名**：界面据此显示为「休息」（无类别）。
         'group': (('${e['task'] ?? ''}').isEmpty
-            ? '__rest__'
+            ? ''
             : priorityGroupOf('${e['task'] ?? ''}')),
         '_queuedRow': false,
         '_entryIndex': i,
