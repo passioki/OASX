@@ -69,9 +69,27 @@ class NavCtrl extends GetxController {
     //     （`ScriptService` 会 `Get.isRegistered<OverviewController>`）,
     //     而 `TaskItemModel` 是 `script_model.dart` 的依赖。
     //     删除它们要连带重构两处, 风险大于收益; 从菜单隐藏即可。
+    //
+    // ★★★ 树结构（用户裁定）★★★
+    //
+    // 用户原话:
+    //   "现在是任务列表、脚本：[脚本，重启]，我要把**两个 tab 放到任务列表
+    //    下边**，即**调度：[任务列表，执行队列]**，**调度和任务列表互换名字**"
+    //
+    // 所以:
+    //     调度              <- ★ 导航树入口（不是叶子: 它下面还有两个面板）
+    //       ├ 任务列表       <- 原页内「调度」tab（Excel 式扁平表格）
+    //       └ 执行队列       <- 原页内「执行队列」tab
+    //     脚本
+    //       重启
+    //
+    // ★ 内部键仍是 `'TaskList'`（`content.dart` 的分派键 + 防崩白名单都用它）,
+    //   **只改显示名** —— 显示名走 `.tr` 翻译（`_cn_menu`）。
+    // ★ 两个子项 `TaskListPanel` / `QueuePanel` 是**面板标识**,
+    //   必须同时在防崩白名单里（见 `switchContent` 的注释）。
     final menu = <String, List<String>>{
       // 放最前: "看全局并调度"比"调某个任务的参数"更常用
-      'TaskList': const [],
+      'TaskList': const ['TaskListPanel', 'QueuePanel'],
     };
     scriptMenuJson.forEach((key, items) {
       // ★ **隐藏后端给的 `'Overview'` 菜单项** —— 见上面的说明:
@@ -153,7 +171,13 @@ class NavCtrl extends GetxController {
     //   `/{script}/TaskList/args`(会返回空对象 `{}`), 而 `loadGroups`
     //   拿到空对象会崩 -> 界面 500。
     //   它的页面由 `views/layout/content.dart` 里的 `[name, 'TaskList']` 分派。
-    if (['Home', 'Overview', 'Updater', 'Tool', 'TaskList'].contains(menu)) {
+    //
+    // ★★ 同理, 导航树里「调度」下的两个**子面板**
+    //    `TaskListPanel` / `QueuePanel` 也**不是任务** —— 它们是
+    //    `TaskListView` 页内的两个区块标识。★ 少了它们, 点一下就会去请求
+    //    `/{script}/任务列表/args` -> 后端返回 `{}` -> **界面崩**。
+    if (['Home', 'Overview', 'Updater', 'Tool', 'TaskList',
+         'TaskListPanel', 'QueuePanel'].contains(menu)) {
       return;
     }
     if (selectedScript.value == 'Home') {
@@ -177,7 +201,10 @@ class NavCtrl extends GetxController {
   ///   `/{script}/TaskList/args`, `loadGroups` 会崩。
   void openTaskSettings(String task) {
     if (task.isEmpty) return;
-    if (['Home', 'Overview', 'Updater', 'Tool', 'TaskList'].contains(task)) {
+    // ★ 与 `switchContent()` **同一份**防崩白名单（见那里的注释）——
+    //   `TaskListPanel` / `QueuePanel` 是面板标识, **不是任务名**。
+    if (['Home', 'Overview', 'Updater', 'Tool', 'TaskList',
+         'TaskListPanel', 'QueuePanel'].contains(task)) {
       return;
     }
     if (selectedScript.value == 'Home') return;

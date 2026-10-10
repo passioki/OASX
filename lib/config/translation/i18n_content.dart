@@ -95,6 +95,30 @@ class I18n {
   static const String updater = 'Updater';
   static const String tool = 'Tool';
   static const String task_list = 'TaskList';
+  // ★★★ 调度台的两个**子面板**（用户裁定: 树里可点, 点了切到对应区块）★★★
+  //
+  // 用户原话:
+  //   "现在是任务列表、脚本：[脚本，重启]，我要把两个tab放到任务列表下边,
+  //    即调度：[任务列表，执行队列]，**调度和任务列表互换名字**"
+  //
+  // ## 改名对照（★ 换名之后语义才顺）
+  //
+  // | 位置 | 旧 | ★ 新 |
+  // |---|---|---|
+  // | 导航树入口 | `TaskList` | ★ **调度** |
+  // | 页内 tab 1 | `调度` | ★ **任务列表** |
+  // | 页内 tab 2 | `执行队列` | **执行队列**（不变）|
+  //
+  // ★ 内部键 `'TaskList'` **保持不变** —— 它是 `content.dart` 的分派键、
+  //   `ctrl_nav.dart` 的防崩白名单键, 还有 4 处硬编码依赖它。
+  //   **只改显示名**（走 `.tr` 翻译）。
+  //
+  // ⚠ 这两个是**面板标识**（不是任务名）—— 必须加进
+  //   `switchContent()` / `openTaskSettings()` 的**防崩白名单**,
+  //   否则 `argsController.loadGroups()` 会拿它们当任务名去请求
+  //   `/{script}/任务列表/args` -> 后端返回 `{}` -> **界面崩**。
+  static const String task_list_panel = 'TaskListPanel';
+  static const String queue_panel = 'QueuePanel';
   static const String script = 'Script';
   static const String restart = 'Restart';
   static const String global_game = 'GlobalGame';

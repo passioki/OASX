@@ -909,7 +909,7 @@ void _phase1Tests() {
 
 // ============================================================ Phase 2: 合并页面
 void _phase2Tests() {
-  test('统一控制台: **两个 tab**（调度 / 执行队列）+ 汇报改**可收纳抽屉**', () {
+  test('统一控制台: **两个面板**（任务列表 / 执行队列, 由导航树切换）+ 汇报可收纳抽屉', () {
     // ★★ 用户反馈演进（每一轮都改变了结构）★★
     //
     //   1. "把功能加入旧总览" -> 合并成一个控制台
@@ -925,17 +925,48 @@ void _phase2Tests() {
     //       **两个重复了**。取消单独的 tab 和右半窗口, 改为**可以收纳的形式**,
     //       就是**点一下从右边滑出来, 再点一下收进去**。"
     //      -> 现在是 **2 个 tab** + **右侧可收纳抽屉**
+    //   8. ★★ **2026-10-10 第四轮**（本轮）:
+    //      "现在是任务列表、脚本：[脚本，重启]，我要把**两个 tab 放到任务列表
+    //       下边**，即**调度：[任务列表，执行队列]**，**调度和任务列表互换名字**"
+    //      -> **页内 TabBar 整个删除**；两个区块改由**左侧导航树**导航:
+    //           调度
+    //             ├ 任务列表   (`selectedMenu == 'TaskListPanel'`)
+    //             └ 执行队列   (`selectedMenu == 'QueuePanel'`)
     final view = codeOnly('lib/views/tasks/task_list_view.dart');
-    expect(view.contains("Tab(text: '调度')"), isTrue);
-    expect(view.contains("Tab(text: '执行队列')"), isTrue);
-    expect(view.contains("Tab(text: '任务汇报')"), isFalse,
-        reason: '★ ①: 「任务汇报」不该再是 tab（用户: "取消单独的 tab"）');
-    expect(view.contains('TabBar('), isTrue);
-    // ⚠ `length` 必须与 tab 数一致 —— 不一致会**运行时崩**（踩过）
-    expect(view.contains('length: 2'), isTrue,
-        reason: 'DefaultTabController 的 length 必须等于 tab 数（现在 2 个）');
-    expect(view.contains('length: 3'), isFalse,
-        reason: 'length 必须跟着 tab 数改（否则运行时崩）');
+    // ★ 页内 TabBar 必须**彻底消失** —— 两套导航并存会打架
+    expect(view.contains('TabBar('), isFalse,
+        reason: '★ 页内 TabBar 已删除: 两个区块改由左侧导航树切换'
+               '（用户: "把两个 tab 放到任务列表下边"）');
+    expect(view.contains('TabBarView('), isFalse,
+        reason: '★ TabBarView 同步删除（TabBar 的搭档）');
+    expect(view.contains('DefaultTabController'), isFalse,
+        reason: '★ TabController 也没用了 —— 留着是"没人用的状态", '
+               '且 length:2 配 0 个 tab 会误导后来人');
+    // ★ 两个区块仍要存在（只是改由 `_bodyFor` 分派）
+    expect(view.contains('_ScheduleTab('), isTrue,
+        reason: '「任务列表」区块必须在');
+    expect(view.contains('_QueueTab('), isTrue,
+        reason: '「执行队列」区块必须在');
+    expect(view.contains('_bodyFor('), isTrue,
+        reason: '★ 必须由 `_bodyFor()` 按导航选择决定显示哪个区块');
+    expect(view.contains("'QueuePanel'"), isTrue,
+        reason: "★ 必须识别导航键 'QueuePanel'（= 执行队列）");
+    // ⚠ `TaskListPanel`（= 任务列表）**不需要**显式判断 —— 它是
+    //   `_bodyFor` 的**默认分支**（`else` 返回 `_ScheduleTab`）。
+    //   ★ 所以这里断言"默认返回任务列表面板"这件事本身,
+    //     而不是断言一个并不存在的标识符（我第一版就断言错了）。
+    final bodyForIdx = view.indexOf('Widget _bodyFor(');
+    expect(bodyForIdx, greaterThan(0), reason: '必须有 `_bodyFor`');
+    final bodyFor = view.substring(bodyForIdx, bodyForIdx + 1400);
+    expect(bodyFor.contains("sel == 'QueuePanel'"), isTrue,
+        reason: '★ 只有「执行队列」需要显式判断');
+    expect(bodyFor.contains('_ScheduleTab('), isTrue,
+        reason: '★ 默认分支必须返回「任务列表」区块'
+               "（`TaskList` 与 `TaskListPanel` 都走它）");
+    // ★★ 关键: 必须**订阅** `NavCtrl` —— 否则点树上的叶子页面不重建
+    expect(view.contains('GetX<NavCtrl>'), isTrue,
+        reason: '★ `_bodyFor` 必须用 `GetX<NavCtrl>` 订阅导航状态; '
+               '本页外层只监听 TaskListController, 不订阅就会"点了没反应"');
 
     // ★★ ① 抽屉: 开关 + 面板 + 动画
     expect(view.contains('_reportDrawer'), isTrue,
@@ -948,13 +979,43 @@ void _phase2Tests() {
     expect(view.contains('if (_reportOpen)'), isTrue,
         reason: '① 抽屉必须按需渲染（不再常驻）');
 
-    // ★ 原始日志 -> **独立窗口**（不再是常驻）
+    // ★ 原始日志 -> **独立窗口**（保留）
     expect(view.contains('_showRunLogs'), isTrue,
-        reason: '原始日志应移到单独界面（供 debug）');
+        reason: '原始日志的独立窗口必须保留（供 debug）');
+
+    // ★★ 本轮新增（用户要求）★★
+    //
+    // 用户原话:
+    //   "**运行日志也拉出个小框横在最上方，只需要能看到一行就行**。
+    //    目前点击出现的日志窗口也继续保留，**按钮放在日志窗口右边**。"
+    expect(view.contains('_logStrip'), isTrue,
+        reason: '★ 顶部必须有**单行**运行日志条（用户要求"横在最上方"）');
+    expect(view.contains('softWrap: false'), isTrue,
+        reason: '★ 单行条必须禁止换行 —— 否则会被撑成多行');
+    // ★ 抽屉里: 日志本体 + 它的按钮（按钮在**右边**）
+    final drawIdx = view.indexOf('Widget _reportDrawer(');
+    expect(drawIdx, greaterThan(0));
+    final drawer = view.substring(drawIdx, drawIdx + 3000);
+    expect(drawer.contains('LogWidget('), isTrue,
+        reason: '★ 抽屉里要有日志本体（"日志窗口也继续保留"）');
+    expect(drawer.contains('_showRunLogs'), isTrue,
+        reason: '★ 打开日志窗口的按钮要在日志本体旁边（用户: "按钮放在日志窗口右边"）');
+    final logIdx = drawer.indexOf('LogWidget(');
+    final btnIdx = drawer.indexOf('_showRunLogs');
+    expect(btnIdx, greaterThan(logIdx),
+        reason: '★ 按钮源码位置必须在 LogWidget **之后** = 界面上在**右边**');
+
+    // ★ 简报**默认展开**（用户要求）
+    expect(view.contains('bool _reportOpen = true;'), isTrue,
+        reason: '★ 简报应**默认展开**（用户: "简报默认展开"）');
+
+    // ⚠ `body` 是**供下面"左右分栏可拖拽"断言用**的 —— 必须保留。
+    //   ★ 注意: **不能**再用它断言"build 里没有 LogWidget" ——
+    //     本轮日志已**移进抽屉**（`_reportDrawer`）, 而 `build` 里调用了
+    //     `_reportDrawer`, 所以 `body` 里出现 `LogWidget` 是**正常的**
+    //     （那条断言已换成上面的"抽屉里有 LogWidget"）。
     final buildIdx = view.indexOf('Widget build(BuildContext context)');
     final body = view.substring(buildIdx, buildIdx + 5200);
-    expect(body.contains('LogWidget('), isFalse,
-        reason: '日志**不该**再常驻在 build 里 —— 它已移到独立窗口');
 
     // ★ 左右宽度**可拖拽调整** + 持久记忆
     expect(body.contains('onHorizontalDragUpdate'), isTrue,

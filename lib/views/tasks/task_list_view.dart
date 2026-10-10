@@ -120,7 +120,11 @@ class _TaskListViewState extends State<TaskListView> {
   ///
   /// 所以「任务汇报」**不再是 tab**, 也不再常驻 —— 由这个开关控制右侧滑出的
   /// 面板（**全局生效**: 宽屏在右栏位置、窄屏在底部位置）。
-  bool _reportOpen = false;
+  // ★★★ 简报**默认展开**（用户要求）★★★
+  //
+  // 用户原话: "**简报默认展开**"。
+  // ★ 之前默认收起, 用户每次进来都要先点一下才看得到汇报。
+  bool _reportOpen = true;
 
   /// 抽屉宽度（宽屏用）。`final` 就好 —— 目前不提供拖拽调整宽度。
   final double _reportWidth = 380;
@@ -143,7 +147,54 @@ class _TaskListViewState extends State<TaskListView> {
       ),
       child: SizedBox(
         width: _reportWidth,
-        child: TaskReportPanel(controller: c),
+        child: Column(
+          children: [
+            // ★★★ 「运行日志」界面 + 它的按钮（用户要求）★★★
+            //
+            // 用户原话:
+            //   "目前点击出现的**日志窗口也继续保留**，**按钮放在日志窗口右边**"
+            //
+            // ★ 布局: 左边是日志本体（`LogWidget`, 常驻显示最新日志），
+            //   右边是那个按钮 —— 点它打开**独立窗口**（`_showRunLogs`,
+            //   大屏 900x600, 供 debug）。★ 窗口本身完全没改。
+            //
+            // ⚠ 高度固定 150: 抽屉总高有限, 剩下的都给下面的任务汇报。
+            SizedBox(
+              height: 150,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: LogWidget(
+                      key: ValueKey('drawer-log-${c.script}'),
+                      controller: c,
+                      title: '运行日志',
+                      enableCollapse: false,
+                    ),
+                  ),
+                  // ★ 按钮**在日志窗口右边**（用户指定的位置）
+                  Padding(
+                    padding: const EdgeInsets.only(left: 2, right: 2),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(
+                          tooltip: '打开独立运行日志窗口（大屏，供 debug）',
+                          onPressed: () => _showRunLogs(context, c),
+                          icon: const Icon(Icons.open_in_new, size: 18),
+                        ),
+                        Text('日志',
+                            style: Theme.of(context).textTheme.labelSmall),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            // 下半: 任务完成汇报（给人看的简报）
+            Expanded(child: TaskReportPanel(controller: c)),
+          ],
+        ),
       ),
     );
   }
@@ -283,9 +334,15 @@ class _TaskListViewState extends State<TaskListView> {
       //
       //   ⚠ `length` **必须**与下面 `TabBar` 的 tab 数一致,
       //     不匹配会**运行时崩**（我踩过一次: 改了 TabBar 忘了改 length）。
-      builder: (_) => DefaultTabController(
-        length: 2,
-        child: Column(
+      //
+      // ★★★ `DefaultTabController` **也一起删了**（TabBar 已移除）★★★
+      //
+      // 用户裁定: "把两个 tab 放到任务列表下边，即**调度：[任务列表，
+      // 执行队列]**，调度和任务列表互换名字"。
+      // ★ 现在**导航由左侧树负责**, 页内不再有 TabController ——
+      //   留着它就是"没人用的状态", 而且 `length: 2` 配 0 个 tab
+      //   本身就是错的（虽然不崩, 但误导后来人）。
+      builder: (_) => Column(
           children: [
             // ★ 这里**不要**用 `Obx` 包 `RunControlBar` ——
             //   `Obx` 要求"回调里**直接**读到 Rx 变量", 而 `RunControlBar`
@@ -296,23 +353,33 @@ class _TaskListViewState extends State<TaskListView> {
             //   正确做法: 把 `Obx` 放到**真正读 Rx 的那个小部件**里
             //   （`RunControlBar` 内部的脚本状态区）。
             RunControlBar(controller: c),
+            // ★★★ 运行日志**单行条** —— 横在最上方（用户要求）★★★
+            //
+            // 用户原话: "**运行日志也拉出个小框横在最上方，只需要能看到
+            //            一行就行**。目前点击出现的日志窗口也继续保留，
+            //            按钮放在日志窗口右边。"
+            //
+            // ★ 定位: 页面**最顶**（运行控制条下方、页头上方）——
+            //   用户选的是"页面最顶（紧贴标题栏下方）"。
+            // ★ 只显示**最新一条**（`c.logs.last`）, 单行、不换行、可横向滚动。
+            // ★ 完整日志仍走原来的**独立窗口**（`_showRunLogs`）, 两者并存。
+            _logStrip(context, c),
             _header(context, c),
-            const TabBar(
-              tabs: [
-                // ★ 用户要求「队列单独一个 tab」。
-                //
-                //   * **调度** —— 状态行 · 批量操作 · 全局开关 · 任务表格
-                //     （Excel 式的批量查看与管理, **不改执行顺序**）
-                //   * **执行队列** —— 调度器/正在运行 · 执行顺序（拖拽）·
-                //     待执行 · 未到开放时间
-                //   * **任务汇报** —— 完成了哪些 / 哪些出错（原日志位）
-                Tab(text: '调度'),
-                Tab(text: '执行队列'),
-                // ★ ①: 「任务汇报」已从 tab 移除 -> 改为右侧**可收纳抽屉**
-                //   用户原话: "取消单独的 tab 和右半窗口, 改为可以收纳的形式"
-                //   开关在顶部工具条的「简报」按钮（全局生效）。
-              ],
-            ),
+            // ★★★ 页内 `TabBar` **已删除**（用户裁定）★★★
+            //
+            // 用户原话:
+            //   "现在是任务列表、脚本：[脚本，重启]，我要把**两个 tab 放到
+            //    任务列表下边**，即**调度：[任务列表，执行队列]**，
+            //    **调度和任务列表互换名字**"
+            //
+            // ★ 也就是说: 这两个区块**改由左侧导航树导航** ——
+            //     调度
+            //       ├ 任务列表   -> `selectedMenu == 'TaskListPanel'`
+            //       └ 执行队列   -> `selectedMenu == 'QueuePanel'`
+            //   而不是页内再放一层 tab（那样"导航"和"页内 tab"两套并存,
+            //   用户点树上的「任务列表」和页内的 tab 会**互相打架**）。
+            //
+            // ★ 显示哪个区块由 `_bodyFor(selectedMenu)` 决定, 见下面。
             Expanded(
               child: wide
                   // ★ 左右分栏宽度**可拖拽调整**（用户要求）
@@ -396,13 +463,7 @@ class _TaskListViewState extends State<TaskListView> {
                                   if (_reportOpen) ...[
                                     SizedBox(
                                       width: left,
-                                      child: TabBarView(
-                                        children: [
-                                          _ScheduleTab(
-                                              c: c, searchCtrl: _searchCtrl),
-                                          _QueueTab(c: c),
-                                        ],
-                                      ),
+                                      child: _bodyFor(context, c),
                                     ),
                                     // ★★ ①: 右半栏不再是常驻汇报 —— 改为**按需滑出的抽屉** ★★
                                     //   用户原话: "取消单独的 tab 和右半窗口,
@@ -412,13 +473,7 @@ class _TaskListViewState extends State<TaskListView> {
                                     _reportDrawer(context, c),
                                   ] else
                                     Expanded(
-                                      child: TabBarView(
-                                        children: [
-                                          _ScheduleTab(
-                                              c: c, searchCtrl: _searchCtrl),
-                                          _QueueTab(c: c),
-                                        ],
-                                      ),
+                                      child: _bodyFor(context, c),
                                     ),
                                 ],
                               ),
@@ -460,13 +515,9 @@ class _TaskListViewState extends State<TaskListView> {
                   : Column(
                       children: [
                         Expanded(
-                          child: TabBarView(
-                            children: [
-                              _ScheduleTab(c: c, searchCtrl: _searchCtrl),
-                              _QueueTab(c: c),
-                              // ★ ①: 第 3 个 tab（任务汇报）已删 -> 改为右侧抽屉
-                            ],
-                          ),
+                          // ★ 同宽屏: 由 `_bodyFor` 按导航选择决定区块
+                          //   （页内 TabBar 已删除 —— 见 `_bodyFor` 的说明）
+                          child: _bodyFor(context, c),
                         ),
                         // ★★ ①: 底部不再是常驻汇报 —— 改为**可收纳抽屉** ★★
                         //   用户原话: "取消单独的 tab 和右半窗口, 改为可以收纳的形式,
@@ -482,8 +533,103 @@ class _TaskListViewState extends State<TaskListView> {
             ),
           ],
         ),
-      ),
     );
+  }
+
+  /// ★★★ 当前显示哪个区块 —— **由左侧导航树决定**（用户裁定）★★★
+  ///
+  /// 用户原话:
+  /// > "现在是任务列表、脚本：[脚本，重启]，我要把**两个 tab 放到任务列表
+  /// >  下边**，即**调度：[任务列表，执行队列]**，**调度和任务列表互换名字**"
+  ///
+  /// 导航树里的三个键都进本页（见 `views/layout/content.dart`）:
+  ///
+  /// | 导航树 | 界面名 | 显示 |
+  /// |---|---|---|
+  /// | `'TaskList'` | ★ **调度** | 任务列表（默认）|
+  /// | `'TaskListPanel'` | ★ **任务列表** | 状态行·批量操作·全局开关·任务表格 |
+  /// | `'QueuePanel'` | **执行队列** | 调度器·执行顺序(拖拽)·待执行·等待中 |
+  ///
+  /// ★ 之前这里是个 `TabBar`（页内两个 tab）。★ 两者**并存会打架** ——
+  ///   用户在树上点「任务列表」、页内 tab 却还停在「执行队列」。
+  ///   现在**只有一套导航**（树），页内 TabBar 已删除。
+  Widget _bodyFor(BuildContext context, TaskListController c) {
+    // ⚠ 必须**订阅** `NavCtrl` —— 本页外层是 `GetBuilder<TaskListController>`,
+    //   它只监听**任务控制器**；而"切哪个区块"是改 `NavCtrl.selectedMenu`。
+    //   ★ 不订阅的话: 状态变了、界面纹丝不动（点了没反应）。
+    // ⚠ `NavCtrl` 可能还没注册（极端时序）—— `Get.isRegistered` 兜住,
+    //   否则 `Get.find` 抛异常、整页白屏。
+    return GetX<NavCtrl>(
+      init: Get.isRegistered<NavCtrl>() ? Get.find<NavCtrl>() : null,
+      builder: (nav) {
+        // ⚠ `init` 兜底后 `nav` **不会为 null**（故不用 `?.`）——
+        //   `GetX<T>` 的 builder 参数对非空 `T` 是非空的。
+        final sel = nav.selectedMenu.value;
+        if (sel == 'QueuePanel') {
+          return _QueueTab(c: c);
+        }
+        // `'TaskList'`（= 导航树「调度」入口）与 `'TaskListPanel'`
+        //（= 「任务列表」）都显示任务列表区块。
+        return _ScheduleTab(c: c, searchCtrl: _searchCtrl);
+      },
+    );
+  }
+
+  /// ★★★ 运行日志**单行条** —— 横在页面最上方（用户要求）★★★
+  ///
+  /// 用户原话:
+  /// > "**运行日志也拉出个小框横在最上方，只需要能看到一行就行**。
+  /// >  目前点击出现的日志窗口也继续保留，按钮放在日志窗口右边。"
+  ///
+  /// ## 设计
+  ///
+  /// * **位置**: 页面**最顶** —— `RunControlBar` 下方、页头上方
+  ///   （用户选的是"页面最顶（紧贴标题栏下方）"）。
+  /// * **内容**: 只显示**最新一条**（`c.logs.last`），**单行**、
+  ///   不换行、`softWrap: false`；长了就**横向可滚**（`TextOverflow.fade`
+  ///   会在长路径上把关键信息切掉，所以用滚动）。
+  /// * ★ **完整日志仍走独立窗口**（`_showRunLogs`）—— 两者并存，不替代。
+  /// * ★ 用 `Obx` 订阅 `c.logs`：**新日志到达就刷**（不用等页面整体重建）。
+  Widget _logStrip(BuildContext context, TaskListController c) {
+    final scheme = Theme.of(context).colorScheme;
+    return Obx(() {
+      // ⚠ `logs` 是 `RxList<String>` 且元素**自带换行**（`addLog` 传进来就带
+      //   `\n`）—— 必须先把换行去掉，否则"一行"会被撑成多行。
+      final raw = c.logs.isNotEmpty ? c.logs.last : '';
+      final line = raw.replaceAll('\n', ' ').replaceAll('\r', ' ').trim();
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        child: Row(
+          children: [
+            Icon(Icons.terminal, size: 13, color: scheme.outline),
+            const SizedBox(width: 6),
+            Expanded(
+              child: line.isEmpty
+                  ? Text('（暂无日志）',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: scheme.outline))
+                  // ★ `reverse: true` —— 长行时**自动停在末尾**（最新那段），
+                  //   这正是看日志时想看的。
+                  : SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      reverse: true,
+                      child: Text(
+                        line,
+                        maxLines: 1,
+                        softWrap: false,
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(fontFamily: 'monospace'),
+                      ),
+                    ),
+            ),
+          ],
+        ),
+      );
+    });
   }
 
   /// 顶部:刷新 / 可执行数 / 本地时钟。
@@ -518,17 +664,13 @@ class _TaskListViewState extends State<TaskListView> {
               ),
             ),
           const Spacer(),
-          // ★★ #6: 「运行日志」入口 ★★
+          // ★★★ 「运行日志」按钮**已从这里挪走**（用户要求）★★★
           //
-          // 用户要求把**原始日志转移到单独界面**用来 debug:
-          //   "现在的日志属于原始日志, 应该**转移到单独界面**, 用来 debug"
+          // 用户原话: "目前点击出现的日志窗口也继续保留，**按钮放在日志窗口
+          //            右边**"。
           //
-          // 所以它不再常驻, 而是从这里打开一个**独立窗口**。
-          IconButton(
-            tooltip: '运行日志（原始日志，供 debug 用）',
-            onPressed: () => _showRunLogs(context, c),
-            icon: const Icon(Icons.article_outlined, size: 18),
-          ),
+          // ★ 所以它现在在右侧抽屉（简报）里、`LogWidget` 的右边 ——
+          //   见 `_reportDrawer()`。★ 窗口本身（`_showRunLogs`）**完全不变**。
           // ★★ ① **任务汇报抽屉**的开关（用户要求"点一下滑出来, 再点一下收进去"）★★
           //
           //   「任务汇报」已不再是 tab、也不再常驻右栏 —— 只由这个按钮控制。
@@ -1397,16 +1539,19 @@ class _QueueTab extends StatelessWidget {
             label: const Text('临时排前面'),
           ),
           const SizedBox(width: 8),
+          // ★★★ 说明改为**悬停显示**（用户要求）★★★
+          //
+          // 用户原话: "把[排一次之后随便排]这类提示都作为**指针悬停后显示**"。
+          //
+          // ★ 原来是一枚**常驻** `Chip`（占横向空间、每时每刻都在喊）；
+          //   现在只留一个小图标, 文字进 `Tooltip`。
+          // ★ 与本项目既有惯例一致（`window_editor` 里注着
+          //   "说明走 Tooltip（用户要求括号改悬停）"）。
           const Tooltip(
-            message: '★ 这两个按钮只是**排一次序**（定时 / 固定谁在前面）。\n'
+            message: '★ 这两个按钮只是**排一次序**（周期 / 临时谁在前面）。\n'
                 '排完之后**所有条目仍然可以任意拖动**，不限类别。\n'
                 '唯一固定的是「休息」条目 —— 它总是排在最后。',
-            child: Chip(
-              // ★ 文案要让"拖动自由"**看得见**（不能只藏在 Tooltip 里）——
-              //   用户抱怨的正是"拖不动 / 不知道为什么"。
-              label: Text('排一次 · 之后随便拖'),
-              visualDensity: VisualDensity.compact,
-            ),
+            child: Icon(Icons.help_outline, size: 17),
           ),
         ],
       ),
