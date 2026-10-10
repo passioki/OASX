@@ -183,10 +183,35 @@ class _ArgumentViewState extends State<ArgumentView> {
     if (model.name == 'windows') {
       final script = Get.find<NavCtrl>().selectedScript.value;
       final task = Get.find<NavCtrl>().selectedMenu.value;
+      // ★★★ 把**任务的周期**也传下去（用户裁定）★★★
+      //
+      // 用户原话: "**窗口必须在选了周期后才能设置**。这样子判断依据就可以按
+      // 有没有周期来判断"
+      //
+      // ★ 周期就在**同一个 `/args` 响应**的 `scheduler` 组里（字段名 `period`,
+      //   枚举 none/daily/weekly/monthly）—— 不必再发请求。
+      // ★ 传下去让 `WindowEditor` 在 `period=none` 时提示"请先选择周期"。
+      //   ⚠ 后端也会拦（`needs_period`）—— 前端提示是**体验**, 后端是**防线**。
+      String taskPeriod = 'none';
+      try {
+        // ⚠ 这里**不能**用 `controller` —— 那是 `model` getter 里的局部变量。
+        //   本 State 里要自己 `Get.find()`。
+        final argsCtrl = Get.find<ArgsController>();
+        final sch = argsCtrl.groupsData.value['scheduler'];
+        for (final m in (sch?.members ?? const [])) {
+          if (m is ArgumentModel && m.name == 'period') {
+            taskPeriod = '${m.value}';
+            break;
+          }
+        }
+      } catch (_) {
+        // 拿不到就当"不限" -> 编辑器只提示、不拦（不阻塞用户）
+      }
       return WindowEditor(
         scriptName: script,
         task: task,
         initial: (model.value as List?) ?? const [],
+        taskPeriod: taskPeriod,
       );
     }
     return switch (model.type) {

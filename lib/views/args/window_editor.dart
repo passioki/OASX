@@ -34,10 +34,20 @@ class WindowEditor extends StatefulWidget {
     required this.scriptName,
     required this.task,
     required this.initial,
+    required this.taskPeriod,
   });
 
   final String scriptName;
   final String task;
+
+  /// ★ 该任务当前的**周期**（`scheduler.period`）—— `'none'`/`'daily'`/…。
+  ///
+  /// ★ 用户裁定: "**窗口必须在选了周期后才能设置**"。
+  ///   `'none'`（不限 = 临时任务）-> 本编辑器**只读 + 提示去选周期**。
+  final String taskPeriod;
+
+  /// 周期未选（= 不限）-> 不允许新增窗口。
+  bool get periodUnset => taskPeriod == 'none' || taskPeriod.isEmpty;
 
   /// 初始窗口列表（来自 `/args` 的 `value`）。
   final List<dynamic> initial;
@@ -119,13 +129,22 @@ class _WindowEditorState extends State<WindowEditor> {
             .toList();
       }
     });
+    // ★★★ 后端会带 `needs_period` 标记 —— 说明"还没选周期, 不能加窗口" ★★★
+    //
+    // 用户裁定: "**窗口必须在选了周期后才能设置**。这样子判断依据就可以按
+    // 有没有周期来判断"。
+    // ★ 后端是**最终防线**（前端灰掉按钮可以被绕过, 而且还有别的客户端）——
+    //   所以这里要把后端的话**原样上屏**, 告诉用户去哪选周期。
+    final needsPeriod = res['needs_period'] == true;
     Get.snackbar(
-      res.containsKey('error') ? '保存失败' : '已保存',
+      needsPeriod
+          ? '请先选择「周期」'
+          : (res.containsKey('error') ? '保存失败' : '已保存'),
       res.containsKey('error')
           ? '${res['error']}'
           : '窗口已更新（共 ${_rows.length} 个）',
       snackPosition: SnackPosition.BOTTOM,
-      duration: const Duration(seconds: 4),
+      duration: Duration(seconds: needsPeriod ? 8 : 4),
     );
   }
 
@@ -149,6 +168,39 @@ class _WindowEditorState extends State<WindowEditor> {
           ],
         ),
         const SizedBox(height: 4),
+        // ★★★ 周期未选（= 不限）时的**说明条**（用户裁定）★★★
+        //
+        // 用户原话: "**窗口必须在选了周期后才能设置。这样子判断依据就可以按
+        // 有没有周期来判断**"
+        //
+        // ★ 这里**只提示 + 禁用新增**, **不隐藏/不清空已有窗口** ——
+        //   历史数据（"有窗口但 period=none"）必须能看见、能编辑、能删,
+        //   否则用户被锁死。★ 后端也只拦"新增"（见 `_require_period_for_windows`）。
+        if (widget.periodUnset)
+          Container(
+            margin: const EdgeInsets.only(bottom: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            decoration: BoxDecoration(
+              color: scheme.errorContainer.withValues(alpha: 0.35),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, size: 15, color: scheme.error),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '这个任务的「周期」是**不限**（= 临时任务），所以不能'
+                    '**新增**窗口。\n'
+                    '★ 请先到上面「scheduler」组里把「周期」选成'
+                    '**每天 / 每周 / 每月**。\n'
+                    '⚠ 已有的窗口仍然可以**编辑和删除**（不会被锁住）。',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ),
+          ),
         for (var i = 0; i < _rows.length; i++) _row(context, i),
         if (_rows.isEmpty)
           Padding(
@@ -162,7 +214,8 @@ class _WindowEditorState extends State<WindowEditor> {
             TextButton.icon(
               icon: const Icon(Icons.add, size: 16),
               label: const Text('添加窗口'),
-              onPressed: _saving
+              // ★ 周期未选时禁用（后端也会拦, 这是**体验**那一半）
+              onPressed: (_saving || widget.periodUnset)
                   ? null
                   : () => setState(() {
                         _rows.add({
@@ -185,6 +238,9 @@ class _WindowEditorState extends State<WindowEditor> {
                       child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.save, size: 16),
               label: const Text('保存窗口'),
+              // ★ 周期未选时**只禁"新增"**, 不禁"保存" ——
+              //   否则用户改不了/删不掉已有窗口（后端同样只拦新增）。
+              //   真正的判据在后端（`needs_period`）; 这里只是不给按。
               onPressed: _saving ? null : _save,
             ),
             if (_error != null) ...[
