@@ -72,6 +72,10 @@ class GroupsModel {
 }
 
 class ArgumentModel {
+  /// ★ S4: **字段名**（如 `windows`）—— `title` 是中文展示名, 不能用来判断类型。
+  ///   前端靠它决定"这个字段要不要用**自定义编辑器**"。
+  final String name;
+
   final String title;
   dynamic value;
   final String type;
@@ -89,6 +93,7 @@ class ArgumentModel {
     this.maximum,
     this.defaultValue,
     this.description, {
+    required this.name,
     required this.title,
     required this.value,
     required this.type,
@@ -101,7 +106,10 @@ class ArgumentModel {
         json['maximum'],
         json['defaultValue'],
         json['description'],
-        title: json['name'] as String,
+        // ★ `name` 是**字段名**（判断要不要自定义编辑器用）;
+        //   `title` 是中文展示名（原来是错用 `name` 当 title —— 一起修正）
+        name: '${json['name'] ?? ''}',
+        title: '${json['title'] ?? json['name'] ?? ''}',
         value: json['value'],
         type: json['type'] as String);
   }

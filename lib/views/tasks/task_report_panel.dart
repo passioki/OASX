@@ -268,12 +268,9 @@ class _TaskReportPanelState extends State<TaskReportPanel> {
                 if (short)
                   _chip(context, '短运行', Colors.orange,
                       '运行时间很短就结束，可能没做成事'),
-                if (t['charges'] is Map)
-                  _chip(
-                      context,
-                      '还剩 ${(t['charges'] as Map)['count']} 次',
-                      scheme.outline,
-                      '充能任务剩余可用次数'),
+                // ★★ S5: 原来还有「还剩 N 次」（`charges` 存量）标签 ★★
+                //   用户裁定去掉存量机制 —— 后端不再返回 `charges`，
+                //   所以这个标签已删除。"跑几轮"由队列里的**重复条目**表达。
               ],
             ),
           ),

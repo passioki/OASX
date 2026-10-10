@@ -105,8 +105,9 @@ class TaskSorter {
       case 'target':
         return (task['target'] as num?)?.toInt() ?? 0;
       case 'progress':
-        final ch = task['charges'];
-        if (ch is Map) return (ch['count'] as num?)?.toInt() ?? 0;
+        // ★★ S5: 原来优先读 `charges['count']`（存量）—— 用户裁定去掉存量机制,
+        //   后端的 `charges` 字段已删除。现在**只看 `count`**：
+        //   "跑几轮"由队列里的**重复条目**表达（设计文档 §0 命题 ③）。
         return (task['count'] as num?)?.toInt() ?? 0;
       case 'next_run':
         // 空值给一个远期字符串, 保证同类型可比
