@@ -110,7 +110,7 @@ mixin LogMixin on GetxController {
     final allLogs = logs.join("");
     Clipboard.setData(ClipboardData(text: allLogs));
     Get.snackbar(I18n.tip.tr, I18n.copy_success.tr,
-        duration: const Duration(seconds: 1));
+        duration: const Duration(seconds: 1), snackPosition: SnackPosition.BOTTOM);
   }
 
   void toggleAutoScroll() {

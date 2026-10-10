@@ -211,6 +211,63 @@ void main() {
       expect(c.contains('snackPosition: SnackPosition.BOTTOM'), isTrue,
           reason: '★ 登录/超时提示要从下边浮起来');
     });
+
+    test('★ **全仓**不得再有"没指定位置"的 Get.snackbar', () {
+      // ## 用户原话
+      // > "把这个消息弹窗改成**从下边弹出**, 现在是从**顶部**弹出, 影响操作"
+      //
+      // **根因**: `Get.snackbar()` 不传 `snackPosition` 时 GetX 默认落
+      //   `SnackPosition.TOP`（顶部居中）—— 正好压住 AppBar / 工具栏 /
+      //   表格表头, 所以"影响操作"。
+      //
+      // ★ 这条守卫**扫全仓**（不只是登录相关文件）: 29 处调用里原本有
+      //   **17 处**没指定位置, 分散在 6 个文件里 —— 只修一处等于没修。
+      final lib = Directory('lib');
+      final offenders = <String>[];
+      for (final f in lib.listSync(recursive: true)) {
+        if (f is! File || !f.path.endsWith('.dart')) continue;
+        final lines = f.readAsStringSync().split('\n');
+        for (var i = 0; i < lines.length; i++) {
+          if (!lines[i].contains('Get.snackbar(')) continue;
+          // ★ 按**括号配平**取整次调用（不能只看这一行:
+          //   `snackPosition` 常写在后面几行）
+          final seg = lines.sublist(i, (i + 40).clamp(0, lines.length))
+              .join('\n');
+          var depth = 0;
+          var end = -1;
+          var inStr = false;
+          for (var k = 0; k < seg.length; k++) {
+            final ch = seg[k];
+            if (inStr) {
+              if (ch == r'\') {
+                k++;
+                continue;
+              }
+              if (ch == "'") inStr = false;
+            } else if (ch == "'") {
+              inStr = true;
+            } else if (ch == '(') {
+              depth++;
+            } else if (ch == ')') {
+              depth--;
+              if (depth == 0) {
+                end = k;
+                break;
+              }
+            }
+          }
+          final call = end >= 0 ? seg.substring(0, end + 1) : seg;
+          if (!call.contains('SnackPosition.BOTTOM')) {
+            offenders.add('${f.path}:${i + 1}');
+          }
+        }
+      }
+      expect(offenders, isEmpty,
+          reason: '★ 这些 Get.snackbar 没指定位置 -> GetX 默认弹在**顶部**,\n'
+              '会压住 AppBar/工具栏, 用户明确说"影响操作"。\n'
+              '请补 `snackPosition: SnackPosition.BOTTOM`:\n'
+              '${offenders.join('\n')}');
+    });
   });
 
   group('⑤ 等待期要有进度反馈（不能静默 30 秒）', () {

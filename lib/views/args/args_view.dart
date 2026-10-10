@@ -20,6 +20,8 @@ import '../../config/translation/i18n_content.dart';
 
 part './group_view.dart';
 part './date_time_picker.dart';
+// ★ S4: **窗口列表编辑器**（`windows` 是 `List[TaskWindow]`, 原生表单渲染不了）
+part './window_editor.dart';
 part '../../controller/args/args_controller.dart';
 
 class Args extends StatelessWidget {
@@ -172,6 +174,21 @@ class _ArgumentViewState extends State<ArgumentView> {
   }
 
   Widget _form() {
+    // ★★ S4: `windows` 用**专用编辑器** ★★
+    //
+    // 它是 `List[TaskWindow]`, 后端 `/args` 里 `type = "array"` ——
+    // 原生的 `"string"` 分支只会 `List.toString()` 出一堆垃圾, 用户根本改不了。
+    //
+    // 用户裁定: "不是 window slots, 而是**设置多个 window**！"
+    if (model.name == 'windows') {
+      final script = Get.find<NavCtrl>().selectedScript.value;
+      final task = Get.find<NavCtrl>().selectedMenu.value;
+      return WindowEditor(
+        scriptName: script,
+        task: task,
+        initial: (model.value as List?) ?? const [],
+      );
+    }
     return switch (model.type) {
       "boolean" => Checkbox(value: model.value, onChanged: onCheckboxChanged)
           .alignment(Alignment.centerLeft)
@@ -311,6 +328,6 @@ class _ArgumentViewState extends State<ArgumentView> {
 // -----------------------------------------------------------------------------
   void showSnakbar(dynamic value) {
     Get.snackbar(I18n.setting_saved.tr, "$value",
-        duration: const Duration(seconds: 1));
+        duration: const Duration(seconds: 1), snackPosition: SnackPosition.BOTTOM);
   }
 }

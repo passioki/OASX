@@ -37,14 +37,14 @@ class SettingsController extends GetxController {
   Future<void> killServer() async {
     final success = await ApiClient().killServer();
     if (success) {
-      Get.snackbar(I18n.kill_server_success.tr, '');
+      Get.snackbar(I18n.kill_server_success.tr, '', snackPosition: SnackPosition.BOTTOM);
       Get.offAllNamed('/login');
       await Future.wait([
         Get.delete<ScriptService>(force: true),
         Get.delete<NavCtrl>(force: true),
       ]);
     } else {
-      Get.snackbar(I18n.kill_server_failure.tr, '');
+      Get.snackbar(I18n.kill_server_failure.tr, '', snackPosition: SnackPosition.BOTTOM);
     }
   }
 }

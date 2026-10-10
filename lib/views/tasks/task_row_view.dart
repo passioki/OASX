@@ -135,7 +135,29 @@ class _TaskRowViewState extends State<TaskRowView> {
           Expanded(flex: 22, child: _nameCell(context)),
           Expanded(
               flex: 12,
-              child: Text('${task['category_label'] ?? task['category'] ?? ''}',
+              // ★★★ 用 `priority_group_label`（**有效分段**），不用 `category_label` ★★★
+              //
+              // ## 实机验收发现的**口径不一致**
+              //
+              // 用户原话:
+              // > "执行顺序下边的任务统计数量显示：**定时任务2条，固定任务14条**,
+              // >  但是**任务上的标签**显示的几乎都是紫色的定时, 红色的次数
+              // >  只有四个"
+              //
+              // **根因**: `category_label` 是**声明类别**（`meta.py` 里的
+              //   `category=Category.TIMED`）, 而分段条统计的是
+              //   `priority_group`（**有效分段**）。
+              // ★ 实测 16 条队列里 **10 条**声明 `timed` 而有效分段是 `fixed`
+              //   （`Delegation`/`DemonEncounter`/`AreaBoss`/`GoldYoukai`/
+              //    `RichMan`/…）—— 于是这一列说"定时任务", 分段条却把它算
+              //   进"固定 14 条", 看起来**自相矛盾**。
+              //
+              // ★ 改成读 `priorityGroupLabelOf()`（后端 `priority_group_label`,
+              //   与分段条**同源**）-> 两处永远一致。
+              //
+              // ⚠ `category_label` 本身没错（"这个任务声明是什么类型"是
+              //   有意义的信息）, 只是**不该**用在"它属于哪个调度段"这一列。
+              child: Text(_c.priorityGroupLabelOf(name),
                   style: Theme.of(context).textTheme.labelSmall)),
           // ★ 在冷却中时**状态格改成冷却徽标** —— 比"等待到点"有用得多
           //   （那会让人以为调度器只是还没轮到它）。
@@ -464,7 +486,17 @@ class _TaskRowViewState extends State<TaskRowView> {
         label: Text('冷却 $mins 分'),
         visualDensity: VisualDensity.compact,
         // 点一下就能"清除失败 + 解除冷却"（修好之后不用等 1 小时）
-        onDeleted: () => _c.clearFailure('${task['name']}'),
+        //
+        // ★★ 审计修复: 传 **`command`** 而不是 `name` ★★
+        //
+        // 后端 `failure_state` 的键是**小写、去下划线**（`_norm()`）——
+        // 实测真实状态文件 `log/.failure_state.json` 的键是 `demonencounter`。
+        // 而 `task['name']` 是**下划线小写**（`demon_encounter`）, 直接传
+        // -> 后端 `pop` 的键不匹配 -> **静默不生效**, 冷却徽标继续显示。
+        //
+        // ★ `/overview` 的 `_failure_fields` 用的就是 `command`
+        //   （见 `schema_router.py`）—— 两边口径统一。
+        onDeleted: () => _c.clearFailure('${task['command']}'),
         deleteIcon: const Icon(Icons.close, size: 14),
         deleteButtonTooltipMessage: '清除失败记录, 解除冷却, 立刻可重试',
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,

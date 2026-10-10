@@ -122,10 +122,10 @@ class ApiClient {
           },
         ));
     if (res.isSuccess && res.data == true) {
-      Get.snackbar(I18n.notify_test_success.tr, '');
+      Get.snackbar(I18n.notify_test_success.tr, '', snackPosition: SnackPosition.BOTTOM);
       return true;
     }
-    Get.snackbar(I18n.notify_test_failed.tr, res.data.toString());
+    Get.snackbar(I18n.notify_test_failed.tr, res.data.toString(), snackPosition: SnackPosition.BOTTOM);
     return false;
   }
 
@@ -679,7 +679,7 @@ class ApiClient {
 
 // ---------------------------------   Snackbar --------------------------------
   void showDialog(String title, String content) {
-    Get.snackbar(title, content);
+    Get.snackbar(title, content, snackPosition: SnackPosition.BOTTOM);
   }
 
   void showNetErrSnackBar() {

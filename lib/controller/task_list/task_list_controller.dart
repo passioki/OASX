@@ -136,7 +136,7 @@ class TaskListController extends GetxController with LogMixin {
       await Get.find<ScriptService>().startScript(scriptName);
       return true;
     } catch (e) {
-      Get.snackbar('启动失败', '$e');
+      Get.snackbar('启动失败', '$e', snackPosition: SnackPosition.BOTTOM);
       return false;
     }
   }
@@ -147,7 +147,7 @@ class TaskListController extends GetxController with LogMixin {
       await Get.find<ScriptService>().stopScript(scriptName);
       return true;
     } catch (e) {
-      Get.snackbar('停止失败', '$e');
+      Get.snackbar('停止失败', '$e', snackPosition: SnackPosition.BOTTOM);
       return false;
     }
   }
@@ -614,7 +614,7 @@ class TaskListController extends GetxController with LogMixin {
     // ★ 必须把输入框也清空 —— 否则界面显示"还在搜索"（踩过:
     //   控制器里清了、输入框里的旧文字还在, 用户以为没生效）。
     onQueryChanged?.call('');
-    Get.snackbar('已恢复默认', '界面偏好已重置');
+    Get.snackbar('已恢复默认', '界面偏好已重置', snackPosition: SnackPosition.BOTTOM);
     return true;
   }
 
@@ -669,10 +669,10 @@ class TaskListController extends GetxController with LogMixin {
     try {
       final r = await _api.resetRunRecord(scriptName, names);
       if (r.containsKey('error')) {
-        Get.snackbar('重置失败', '${r['error']}');
+        Get.snackbar('重置失败', '${r['error']}', snackPosition: SnackPosition.BOTTOM);
         return false;
       }
-      Get.snackbar('已重置', '归档了 ${r['archived_rounds'] ?? 0} 轮');
+      Get.snackbar('已重置', '归档了 ${r['archived_rounds'] ?? 0} 轮', snackPosition: SnackPosition.BOTTOM);
       selected.clear();
       return true;
     } finally {
@@ -690,13 +690,13 @@ class TaskListController extends GetxController with LogMixin {
     try {
       final r = await _api.requestRunOnce(scriptName, names);
       if (r.containsKey('error')) {
-        Get.snackbar('排队失败', '${r['error']}');
+        Get.snackbar('排队失败', '${r['error']}', snackPosition: SnackPosition.BOTTOM);
         return false;
       }
       runOnceQueue = ((r['tasks'] as List?) ?? const [])
           .map((e) => '$e')
           .toList();
-      Get.snackbar('已排队', '${names.length} 个任务将在当前任务结束后依次运行');
+      Get.snackbar('已排队', '${names.length} 个任务将在当前任务结束后依次运行', snackPosition: SnackPosition.BOTTOM);
       selected.clear();
       return true;
     } finally {
@@ -1103,6 +1103,72 @@ class TaskListController extends GetxController with LogMixin {
     return 'fixed';
   }
 
+  /// ★★★ 段名的**中文标签**（`'定时'` / `'固定'`）—— 界面显示**只用这一个** ★★★
+  ///
+  /// ## 为什么需要它（实机验收发现的**口径不一致**）
+  ///
+  /// 用户原话:
+  /// > "执行顺序下边的任务统计数量显示：**定时任务2条，固定任务14条**,
+  /// >  但是**任务上的标签**显示的几乎都是紫色的定时, 红色的次数只有四个"
+  ///
+  /// **根因**: 界面有**三个口径**各读不同字段 ——
+  ///
+  /// | 界面位置 | 原来读的 | 语义 |
+  /// |---|---|---|
+  /// | 「执行顺序」下的分段条 | `priority_group` | ★ **有效分段**（权威）|
+  /// | 任务表格的「类型」列 | `category_label` | **声明**类别 |
+  /// | 队列行色条 / 「定时·次数」标签 | `auto_queue` | 会不会**自动进队列** |
+  ///
+  /// ★ 实测 `恋鸟树` 的 16 条队列里有 **10 条**声明 `timed` 而有效分段是
+  ///   `fixed`（`Delegation`/`DemonEncounter`/`AreaBoss`/`GoldYoukai`/
+  ///   `RichMan`/…）—— 于是界面**同时**说它"是定时"又说"按 fixed 排",
+  ///   看起来就是**自相矛盾**。
+  ///
+  /// ★ 修法: 标签一律**从这个方法取**, 它读后端的
+  ///   `priority_group_label`（与 `priority_group` 同源, 后端一处定义）。
+  ///   前端不再自己拿 `category` / `auto_queue` 现编。
+  ///
+  /// ★ **拖动不受它影响** —— 拖动永远自由, 这个标签纯粹是**显示**。
+  String priorityGroupLabelOf(String command) {
+    // ① 后端给的权威标签
+    for (final t in queuedTasks) {
+      if ('${t['command']}' == command) {
+        final l = '${t['priority_group_label'] ?? ''}';
+        if (l.isNotEmpty) return l;
+      }
+    }
+    for (final t in _allTasks) {
+      if ('${t['command']}' == command) {
+        final l = '${t['priority_group_label'] ?? ''}';
+        if (l.isNotEmpty) return l;
+      }
+    }
+    // ② 兜底: 由段名推（与后端 `PRIORITY_GROUP_LABEL` 同一套值）
+    return priorityGroupOf(command) == 'timed' ? '定时' : '固定';
+  }
+
+  /// 该任务**当前是否在开放时段内**（`/overview` 的 `in_window_now`）。
+  ///
+  /// ★ 与 `slot` / `reason` 的区别: 后者是"调度器把它放哪了"
+  ///（含未启用/不在队列等原因）, 这个是纯粹的"**窗口**开没开"。
+  ///
+  /// ★ 取不到时返回 `true`（保守: 不因为一个缺字段就把行画成"不能跑"）。
+  bool inWindowNowOf(String command) {
+    for (final t in queuedTasks) {
+      if ('${t['command']}' == command) {
+        final v = t['in_window_now'] ?? t['in_window'];
+        if (v is bool) return v;
+      }
+    }
+    for (final t in _allTasks) {
+      if ('${t['command']}' == command) {
+        final v = t['in_window_now'] ?? t['in_window'];
+        if (v is bool) return v;
+      }
+    }
+    return true;
+  }
+
   /// 从一行任务数据里取段名 —— **先信后端, 再兜底复算**。
   String _groupOfRow(Map<String, dynamic> t) {
     final g = '${t['priority_group'] ?? ''}'.toLowerCase();
@@ -1464,7 +1530,7 @@ class TaskListController extends GetxController with LogMixin {
   Future<void> addEntry(Map<String, dynamic> entry, {int index = -1}) async {
     final res = await _api.addRunListEntry(scriptName, entry, index: index);
     if (res.containsKey('error')) {
-      Get.snackbar('添加失败', '${res['error']}');
+      Get.snackbar('添加失败', '${res['error']}', snackPosition: SnackPosition.BOTTOM);
       return;
     }
     await reload();
@@ -1474,7 +1540,7 @@ class TaskListController extends GetxController with LogMixin {
   Future<void> removeEntry(int index) async {
     final res = await _api.removeRunListEntry(scriptName, index);
     if (res.containsKey('error')) {
-      Get.snackbar('删除失败', '${res['error']}');
+      Get.snackbar('删除失败', '${res['error']}', snackPosition: SnackPosition.BOTTOM);
       return;
     }
     await reload();

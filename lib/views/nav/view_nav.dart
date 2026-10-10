@@ -263,7 +263,7 @@ class Nav extends StatelessWidget {
       if (scriptModel != null &&
           scriptModel.state.value == ScriptState.running) {
         Get.snackbar(I18n.tip.tr, I18n.config_update_tip.tr,
-            duration: const Duration(milliseconds: 2000));
+            duration: const Duration(milliseconds: 2000), snackPosition: SnackPosition.BOTTOM);
         return false;
       }
       await wsService.close(scriptName);

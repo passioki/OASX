@@ -581,12 +581,30 @@ class _QueuePanelState extends State<QueuePanel> {
     //
     // ★ 类别来自后端（`taskRowOf` 的 `category` / `auto_queue`）,
     //   前端**不重新推导**调度规则。
+    // ★★★ 色条与标签**都用 `priority_group`（有效分段）**, 不用 `auto_queue` ★★★
+    //
+    // ## 实机验收发现的**口径不一致**
+    //
+    // 用户原话:
+    // > "执行顺序下边的任务统计数量显示：**定时任务2条，固定任务14条**,
+    // >  但是**任务上的标签**显示的几乎都是紫色的定时, 红色的次数只有四个"
+    //
+    // **根因**: 这里原来用的是 `isAutoQueue(cmd)`（= `auto_queue`,
+    //   "会不会**自动进队列**"）—— 那是**第三个**口径, 与
+    //   `priority_group`（有效分段, 分段条用的）**不是一回事**。
+    // ★ 实测 16 条队列里 10 条 `auto_queue` 与有效分段不一致 -> 颜色和
+    //   分段条对不上。
+    //
+    // ★ 改成读 `priorityGroupOf(cmd)` —— 与分段条**同源**。
+    // ★ 「会不会自动进队列」的信息仍在 `isAutoTask` 的 Tooltip 里说明
+    //   （那是另一件有用的事, 只是不该拿它当**分段**的判据）。
     final isAutoTask = isTask && c.isAutoQueue(cmd);
+    final group = isTask ? c.priorityGroupOf(cmd) : '';
     final accent = !isTask
         ? Theme.of(context).colorScheme.outline
-        : (isAutoTask
+        : (group == 'timed'
             ? Theme.of(context).colorScheme.primary // 定时
-            : Theme.of(context).colorScheme.tertiary); // 次数/固定
+            : Theme.of(context).colorScheme.tertiary); // 固定/次数
 
     // 「休息」条目给不同底色 —— 一眼看出"这里会停"
     final bg = isTask
@@ -630,21 +648,26 @@ class _QueuePanelState extends State<QueuePanel> {
                 Expanded(
                   child: Row(
                     children: [
-                      // ★★ ③: 类别小标签 —— 「定时」/「次数」★★
+                      // ★★ ③: 类别小标签 —— 「定时」/「固定」★★
                       //
                       // 用户: "请用**不同颜色或两个边框**来区分"。
                       // 色条在左边（`decoration`）, 这里再给一枚文字标签,
                       // 色盲用户/截图里也能分辨。
                       // ★ 说明走 Tooltip（用户要求"括号改悬停"）。
+                      //
+                      // ⚠ 标签文字**原来**是 `isAutoTask ? '定时' : '次数'`
+                      //   —— 按 **`auto_queue`**（会不会自动进队列）分,
+                      //   与分段条（按 `priority_group`）**口径不同**,
+                      //   于是"分段条说定时 2 条, 队列里却有 12 枚定时"。
+                      // ★ 现在两处**同源**: 都用 `priorityGroupLabelOf()`。
+                      //   分段条说"定时 N 条", 队列里就**恰好** N 枚"定时"。
                       if (isTask) ...[
                         Tooltip(
-                          message: isAutoTask
-                              ? '**定时任务** —— 启用后自动进队列；'
-                                  '有开放窗口，窗口内才会跑。\n'
-                                  '移出队列会**同时停用它**。'
-                              : '**次数任务** —— 需要手动【添加任务】才进队列；'
-                                  '跑满设置的次数就停。\n'
-                                  '移出队列**不会停用**它，可随时加回来。',
+                          message: '${c.priorityGroupLabelOf(cmd)}任务'
+                              '（${group == 'timed' ? '排在定时段' : '排在固定段'}）\n'
+                              '${isAutoTask ? '启用后会**自动进队列**；' : '需要手动【添加任务】才进队列；'}\n'
+                              '${c.inWindowNowOf(cmd) ? '当前**在**开放时段内。' : '当前**不在**开放时段内 —— 到点才会跑。'}\n'
+                              '★ **拖动不受它限制** —— 任何条目都能互相拖。',
                           child: Container(
                             margin: const EdgeInsets.only(right: 6),
                             padding: const EdgeInsets.symmetric(
@@ -654,7 +677,7 @@ class _QueuePanelState extends State<QueuePanel> {
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
-                              isAutoTask ? '定时' : '次数',
+                              c.priorityGroupLabelOf(cmd),
                               style: Theme.of(context)
                                   .textTheme
                                   .labelSmall
