@@ -777,156 +777,7 @@ mixin _GlobalPanelMixin {
   ///
   /// ★ T1: 原来的「优先级依据」(`schedule_rule`) 下拉**已删除** ——
   ///   它与「调度优先级」(`priority_mode`) 语义重叠, 是"拖了没用"的根源。
-  Widget _globalPanel(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _panelTitle(context, '全局设置', null),
-            const SizedBox(height: 8),
 
-            // ---------- 两个总开关 + 两者关系 ----------
-            //
-            // ★★ 这一段是补一个**重大遗漏** ★★
-            //
-            // 后端把两个总开关 + 定时优先 + 休息穿插全做完了, `/schema` 的
-            // `global_fields` 也暴露了 —— 但前端**一个都没渲染**,
-            // 于是它们永远停在默认值, 用户在界面上根本改不了。
-            //
-            // 标签与说明一律从 `/schema` 读（`c.globalFieldLabel`）,
-            // 前端**不硬编码**字段名与文案。
-            _switchRow(
-              context,
-              key: 'enable_fixed',
-              value: c.enableFixed,
-              fallbackLabel: '启用临时任务',
-              onChanged: c.toggleEnableFixed,
-            ),
-            _switchRow(
-              context,
-              key: 'enable_timed',
-              value: c.enableTimed,
-              fallbackLabel: '启用周期任务',
-              onChanged: c.toggleEnableTimed,
-            ),
-            const SizedBox(height: 4),
-            // ★★★ S7: 「快捷排序」按钮**已移走**（用户要求）★★★
-            //
-            // 用户原话: "**快捷排序应该和执行顺序在同一个 tab 里**。"
-            //
-            // ★ 它原来在这里（全局设置区, 属于「调度」tab）—— 而
-            //   「执行顺序」在「**执行队列**」tab 里。两者分在两个 tab
-            //   是**找不到**的, 用户反馈过。
-            // ★ 现在它由 `_sortActions(c)` 渲染, 位置在 `_QueueTab`
-            //   的**最上方**（在 `QueuePanel` 之前）, 与执行顺序同屏。
-            _switchRow(
-              context,
-              key: 'rest_interleave',
-              value: c.restInterleave,
-              fallbackLabel: '休息时可穿插周期任务',
-              onChanged: c.toggleRestInterleave,
-            ),
-            const Divider(height: 16),
-
-            Wrap(
-              spacing: 16,
-              runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                // 队列跑空后 —— **后端真实支持**的字段
-                // （原型的"跑完循环整表"后端没有, 见 controller 里的说明）
-                if (c.queueEmptyChoices.isNotEmpty)
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(c.queueEmptyLabel),
-                      const SizedBox(width: 8),
-                      DropdownButton<String>(
-                        value: c.queueEmptyChoices
-                                .any((e) => '${e['value']}' == c.whenQueueEmpty)
-                            ? c.whenQueueEmpty
-                            : '${c.queueEmptyChoices.first['value']}',
-                        isDense: true,
-                        items: [
-                          for (final e in c.queueEmptyChoices)
-                            DropdownMenuItem<String>(
-                              value: '${e['value']}',
-                              child: Text('${e['label']}'),
-                            ),
-                        ],
-                        onChanged: (v) {
-                          if (v != null) c.setWhenQueueEmpty(v);
-                        },
-                      ),
-                    ],
-                  ),
-                // ★★ T1（审计修复）: **删掉「优先级依据」四选一下拉** ★★
-                //
-                // ## 为什么删
-                //
-                // 它是旧的 `schedule_rule`（`Filter`/`FIFO`/`Priority`/`List`）
-                // 控件, 与新的「调度优先级」(`priority_mode` 三模式)
-                // **语义重叠**——构成**两个互相牵制的控件**:
-                //   * 用户拖了顺序, 却因为 `schedule_rule != List` 而不生效
-                //     （台账 §27.3 那类"拖了没用"陷阱）
-                //   * 下面那句提示「⚠ 顺序要生效需选「列表优先」」正是在
-                //     向用户解释这个**本不该存在**的困惑
-                //
-                // 用户裁定: "**三个选项: 定时任务优先、固定任务优先、自定义**"
-                // —— 调度优先级只有**一个**开关。
-                //
-                // ★ 后端已同步: `update_scheduler()` 不再读 `schedule_rule`
-                //   （T1）, 两个分支已合并为"队列是唯一顺序权威"。
-                //
-                // ★ 我此前在注释里写了"那个下拉也一并移除"却**没有真的删**
-                //   —— 注释与代码不符（审计抓到）。现在真的删了。
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// 一个**全局布尔开关**的行（标签 + Switch + 说明）。
-  ///
-  /// 标签与说明都从 `/schema` 的 `global_fields` 读 ——
-  /// 后端改名/改说明前端自动跟上, 前端不维护一份文案。
-  Widget _switchRow(
-    BuildContext context, {
-    required String key,
-    required bool value,
-    required String fallbackLabel,
-    required Future<void> Function() onChanged,
-  }) {
-    final help = '${c.globalField(key)['help'] ?? ''}';
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(c.globalFieldLabel(key, fallbackLabel)),
-                if (help.isNotEmpty)
-                  Text(help,
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: Theme.of(context).disabledColor,
-                          )),
-              ],
-            ),
-          ),
-          Switch(
-            value: value,
-            onChanged: c.busy ? null : (_) => onChanged(),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _ScheduleTab extends StatelessWidget with _GlobalPanelMixin {
@@ -974,9 +825,16 @@ class _ScheduleTab extends StatelessWidget with _GlobalPanelMixin {
         // 2. 批量操作（脚本进程开关 + 批量启停 / 运行一次 / 重置选中 / 搜索 / 筛选）
         _bulkPanel(context),
         const SizedBox(height: 8),
-        // 3. ★ 全局开关（**顶部** —— 用户要求, 不许埋在页底）
-        _globalPanel(context),
-        const SizedBox(height: 8),
+        // ★★★ 3. 全局开关**已移走** -> 「执行队列」（用户要求）★★★
+        //
+        // 用户原话:
+        //   "只需要把**全局开关移到执行队列**，然后把任务列表里的滚动条
+        //    统一起来就行，现在滑动使用两个滚动条很难受"
+        //
+        // ★ 理由: 全局开关（启用临时/周期任务、休息穿插、队列跑空后）是
+        //   **运行时**操作, 与「执行队列」里的快捷排序/执行顺序同属一类;
+        //   留在"看表格"的页面里只会打断视线。
+        // ★ 现在它在 `_QueueTab` 里, 与快捷排序**同一行**（省 5 行）。
         // 4. 任务表格 —— Excel 式的**批量查看与管理**（启停 / 运行一次 /
         //    多列排序 / 筛选）; **不改执行顺序**（用户明确过）。
         //
@@ -1306,10 +1164,8 @@ class _ScheduleTab extends StatelessWidget with _GlobalPanelMixin {
   ///
   /// ★ 行高固定 48（`itemExtent`）—— 让"预算高度"能算准,
   ///   同时避免 `ListView` 逐行测量（那也是卡顿来源之一）。
-  static const double _rowHeight = 48;
 
   /// 表格最多显示多少行（超出则内部滚动）。
-  static const int _maxVisibleRows = 12;
 
   Widget _tablePanel(BuildContext context) {
     if (c.tasks.isEmpty) {
@@ -1322,7 +1178,6 @@ class _ScheduleTab extends StatelessWidget with _GlobalPanelMixin {
       );
     }
     final rows = c.tasks.length;
-    final visible = rows > _maxVisibleRows ? _maxVisibleRows : rows;
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12),
       child: Column(
@@ -1339,15 +1194,30 @@ class _ScheduleTab extends StatelessWidget with _GlobalPanelMixin {
             child: _tableHeader(context),
           ),
           const Divider(height: 1),
-          SizedBox(
-            height: visible * _rowHeight,
-            // ★ 懒加载 —— 只构建可见行
-            child: ListView.builder(
-              itemCount: rows,
-              itemExtent: _rowHeight,
-              itemBuilder: (_, i) => TaskRowView(
-                key: ValueKey('${c.tasks[i]['name']}'),
-                task: c.tasks[i],
+          // ★★★ 去掉内层滚动 —— 全页**只留一个滚动条**（用户要求）★★★
+          //
+          // 用户原话:
+          //   "把任务列表里的**滚动条统一起来**就行，现在滑动使用**两个滚动条
+          //    很难受**"
+          //
+          // ## 根因（两个 `ListView` 嵌套, 各出一个滚动条）
+          //
+          // 原来这里是:
+          //     SizedBox(height: visible * _rowHeight)   <- 限高（最多 12 行）
+          //       └ ListView.builder                     <- ★ 滚动条 2（独立滚）
+          // 外面还有 `_ScheduleTab` 的 ListView      -> ★ 滚动条 1（整页滚）
+          // ★ 于是鼠标在表格上和在表格外, 滚的是**两个不同的东西**。
+          //
+          // ## 现在
+          //
+          // ★ 行**直接摊开**到外层 `ListView` 里 -> 只有外层那**一个**滚动条。
+          // ⚠ 代价: 54 行全部构建（外层 `ListView` 仍会跳过屏幕外的）。
+          //   这个量级不卡; 若将来真卡, 正解是 `CustomScrollView` +
+          //   单个 `SliverList`（既懒加载又只有一个滚动条）—— 改动更大,
+          //   真遇到再做。
+          ...c.tasks.map((t) => TaskRowView(
+                key: ValueKey('${t['name']}'),
+                task: t,
                 mode: TaskRowMode.overview,
                 controller: c,
                 // ★ 点任务行 -> 进该任务的**设置页**（用户要求）。
@@ -1356,11 +1226,11 @@ class _ScheduleTab extends StatelessWidget with _GlobalPanelMixin {
                 //   后者开头有 `useablemenus` 白名单（只列侧边栏里有的任务）,
                 //   点一个不在侧边栏的任务会被**静默忽略** ——
                 //   用户看到的是"点了没反应", 很难排查。
+                // ⚠ 这里必须用 `t`（闭包当前元素）—— **不能**再用 `c.tasks[i]`:
+                //   摊开后没有 `i` 了（那是 `itemBuilder` 的参数）。
                 onTap: () => Get.find<NavCtrl>()
-                    .openTaskSettings('${c.tasks[i]['command']}'),
-              ),
-            ),
-          ),
+                    .openTaskSettings('${t['command']}'),
+              )),
         ],
       ),
     );
@@ -1495,7 +1365,7 @@ class _QueueTab extends StatelessWidget {
         // ★ 它原来在「调度」tab 的全局设置区 —— 而「执行顺序」（可拖
         //   列表）在「执行队列」tab。**分在两个 tab = 找不到**。
         // ★ 现在放在本 tab 最上方（`QueuePanel` 之前）, 与执行顺序同屏。
-        _sortActions(c),
+        _sortActions(context, c),
         const Divider(height: 16),
 
         // 队列本体 —— 含 调度器/正在运行 · 执行顺序(拖拽) · 待执行 · 等待中
@@ -1518,7 +1388,155 @@ class _QueueTab extends StatelessWidget {
   ///
   /// ★ **它是一个动作, 不是一个状态**: 点一下, 排一次, 不留状态。
   ///   排完之后用户可以**随意再拖**（跨类别也行）。
-  Widget _sortActions(TaskListController c) {
+  /// ★★★ 全局开关 —— **紧凑一行**（用户要求: "合理摆放, 节省空间"）★★★
+  ///
+  /// 用户原话:
+  /// > "**全局开关设置放到执行队列里, 和别的功能按钮合理摆放, 节省空间**"
+  ///
+  /// ## 改之前（一张独立大卡片, 约 5 行）
+  ///
+  /// ```
+  /// ┌ 全局设置 ────────────────────────┐   <- 标题占一整行
+  /// │ ☑ 启用临时任务                    │   <- 每个开关各占一行（3 个 = 3 行）
+  /// │ ☑ 启用周期任务                    │
+  /// │ ☐ 休息时可穿插周期任务             │
+  /// │ ─────────────────────           │   <- 又一条 Divider
+  /// │ 队列跑空后  [什么都不做 ▾]         │   <- 下拉再占一行
+  /// └──────────────────────────────────┘
+  /// ```
+  ///
+  /// ## 改之后（0 行额外高度 —— 并进 `_sortActions` 那一行）
+  ///
+  /// ★ 拆掉卡片的**壳**（标题 + `Divider` + `Column`），4 个控件压成一行:
+  ///   `[⇄][⇄][⇄] 队列跑空后 [▾]`
+  /// * 每个开关 = **一枚图标按钮**（开=实心 / 关=空心, 一眼看出状态）
+  /// * 标签 + 完整说明 -> **`Tooltip` 悬停显示**
+  ///   ★ 与用户"提示改悬停"的要求一致, 也正好把 5 行压成 0 行
+  /// * 标签文案仍从 `/schema` 读（`c.globalFieldLabel`）—— 前端**不硬编码**
+  ///
+  /// ⚠ 用 `Wrap` 而不是 `Row`: 窄窗口时自动折行, 不会 `RenderFlex` 溢出。
+  Widget _globalSwitchesInline(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        // ---------- 两个总开关 + 休息穿插 ----------
+        //
+        // ★ 后端早已把这三个字段 + `/schema` 的 `global_fields` 都做完了,
+        //   前端此前**一个都没渲染**（它们永远停在默认值, 用户改不了）。
+        //   现在由这里渲染; 标签/说明一律从 `/schema` 读。
+        _inlineSwitch(
+          context,
+          key: 'enable_fixed',
+          value: c.enableFixed,
+          fallbackLabel: '启用临时任务',
+          onChanged: c.toggleEnableFixed,
+        ),
+        _inlineSwitch(
+          context,
+          key: 'enable_timed',
+          value: c.enableTimed,
+          fallbackLabel: '启用周期任务',
+          onChanged: c.toggleEnableTimed,
+        ),
+        _inlineSwitch(
+          context,
+          key: 'rest_interleave',
+          value: c.restInterleave,
+          fallbackLabel: '休息时可穿插周期任务',
+          onChanged: c.toggleRestInterleave,
+        ),
+        // 分组竖线（替代原来的 Divider, 但不占高度）
+        Container(
+          width: 1,
+          height: 20,
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          color: scheme.outlineVariant,
+        ),
+        // ---------- 队列跑空后 ----------
+        //
+        // 后端**真实支持**的字段（原型的"跑完循环整表"后端没有,
+        // 见 `task_list_controller` 里的说明）。
+        if (c.queueEmptyChoices.isNotEmpty) ...[
+          Tooltip(
+            message: '${c.queueEmptyLabel}\n'
+                '队列跑完之后做什么。\n'
+                '★ 可选值由后端 `/schema` 给出（不在前端硬编码）。',
+            child: Text(c.queueEmptyLabel,
+                style: Theme.of(context).textTheme.bodySmall),
+          ),
+          const SizedBox(width: 6),
+          DropdownButton<String>(
+            value: c.queueEmptyChoices
+                    .any((e) => '${e['value']}' == c.whenQueueEmpty)
+                ? c.whenQueueEmpty
+                : '${c.queueEmptyChoices.first['value']}',
+            isDense: true,
+            underline: const SizedBox.shrink(),
+            style: Theme.of(context).textTheme.bodySmall,
+            items: [
+              for (final e in c.queueEmptyChoices)
+                DropdownMenuItem<String>(
+                  value: '${e['value']}',
+                  child: Text('${e['label']}'),
+                ),
+            ],
+            onChanged: (v) {
+              if (v != null) c.setWhenQueueEmpty(v);
+            },
+          ),
+        ],
+        // ★★ T1（审计修复）: 「优先级依据」四选一下拉**已删** ★★
+        //
+        // 它是旧的 `schedule_rule`（`Filter`/`FIFO`/`Priority`/`List`）控件,
+        // 与新的排序方式**语义重叠** -> 构成**两个互相牵制的控件**
+        // （用户拖了顺序, 却因为 `schedule_rule != List` 而不生效）。
+        // ★ 后端 `update_scheduler()` 已不再读 `schedule_rule`,
+        //   "队列是唯一顺序权威"。
+      ],
+    );
+  }
+
+  /// 全局开关的**一行紧凑开关** —— 一枚图标按钮 + `Tooltip`。
+  ///
+  /// * 开 = `Icons.toggle_on`（实心, 主色）/ 关 = `Icons.toggle_off`（灰）
+  /// * 标签与说明**全部**走 `Tooltip` —— 不占版面
+  /// * 文案从 `/schema` 读（`c.globalFieldLabel` / `globalFieldHelp`）,
+  ///   前端不硬编码; 拿不到时用 `fallbackLabel` 兜底
+  Widget _inlineSwitch(
+    BuildContext context, {
+    required String key,
+    required bool value,
+    required String fallbackLabel,
+    required Future<void> Function() onChanged,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    // ⚠ 每个字段的开关是**异步**的（要等后端返回）—— 用 `onPressed: () => onChanged()`
+    //   而不是 `async` 回调, 免得 `use_build_context_synchronously` 警告。
+    // ⚠ `globalFieldHelp` 这个方法**不存在** —— 说明在 `globalField(key)['help']`
+    //   里（与 `label` 同一个 map）。
+    final f = c.globalField(key);
+    final label = '${f['label'] ?? fallbackLabel}';
+    final help = '${f['help'] ?? ''}';
+    return Tooltip(
+      message: help.isEmpty ? label : '$label\n$help',
+      child: IconButton(
+        visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+        onPressed: () => onChanged(),
+        icon: Icon(
+          value ? Icons.toggle_on : Icons.toggle_off,
+          size: 24,
+          color: value ? scheme.primary : scheme.outline,
+        ),
+      ),
+    );
+  }
+
+  Widget _sortActions(BuildContext context, TaskListController c) {
     // ⚠ 这里**不能**用 `.padding(...)`（`styled_widget` 的扩展）——
     //   本文件**没有** import 它, 会报 `undefined_method`。
     //   用原生 `Padding` 包一层。
@@ -1553,6 +1571,17 @@ class _QueueTab extends StatelessWidget {
                 '唯一固定的是「休息」条目 —— 它总是排在最后。',
             child: Icon(Icons.help_outline, size: 17),
           ),
+          const SizedBox(width: 8),
+          // 分组竖线: 左边 = 快捷排序（动作）, 右边 = 全局开关（设置）
+          Container(
+            width: 1,
+            height: 22,
+            margin: const EdgeInsets.symmetric(horizontal: 12),
+            color: Theme.of(context).colorScheme.outlineVariant,
+          ),
+          // ★★★ 全局开关 —— 并进这一行（用户要求: "放到执行队列里,
+          //     和别的功能按钮合理摆放, 节省空间"）★★★
+          _globalSwitchesInline(context),
         ],
       ),
     );

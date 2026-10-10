@@ -797,7 +797,11 @@ void _phase1Tests() {
       expect(view.contains("'$key'"), isTrue,
           reason: '全局设置缺开关 $key（后端早就支持了）');
     }
-    expect(view.contains('_switchRow'), isTrue, reason: '缺开关行组件');
+    // ★ 本轮改造: `_switchRow`（标签 + Switch 的**整行**）已换成
+    //   `_inlineSwitch`（一枚图标按钮 + Tooltip）——
+    //   用户要求"全局开关放到执行队列里, 和别的功能按钮**合理摆放, 节省空间**"。
+    expect(view.contains('_inlineSwitch'), isTrue,
+        reason: '缺开关控件（`_inlineSwitch`: 图标 + Tooltip, 省版面）');
     // ★ 反向守卫: 已删的「调度优先级」不得回来
     expect(view.contains("'priority_mode'"), isFalse,
         reason: '★ 「调度优先级三模式」已被用户裁定删除 —— '
@@ -834,7 +838,12 @@ void _phase1Tests() {
 
     final view = codeOnly('lib/views/tasks/task_list_view.dart');
     // 开关行必须用 controller 给的标签, 而不是写死中文
-    expect(view.contains('c.globalFieldLabel('), isTrue);
+    //
+    // ★ 本轮改造: 不再用 `globalFieldLabel()`（那只是 map 里的一个键）,
+    //   而是直接读整个 `globalField(key)` —— 因为紧凑开关的 Tooltip 要
+    //   **标签 + 说明**两项（`f['label']` / `f['help']`）。
+    expect(view.contains('c.globalField('), isTrue,
+        reason: '开关的标签/说明必须从 `/schema` 读, 不硬编码文案');
   });
 
   test('优先级与预期完成时间可编辑（每任务）', () {
@@ -1061,20 +1070,75 @@ void _phase2Tests() {
         reason: 'sm 为 null 时不能进 Obx（没有 Rx 可读会让 GetX 抛异常）');
   });
 
-  test('执行队列**独立成一个 tab**，不在调度 tab 里（用户要求）', () {
+  test('执行队列**独立成一个区块**；全局开关已移进它（用户要求）', () {
     final view = codeOnly('lib/views/tasks/task_list_view.dart');
-    // 队列 tab 类存在
+    // 队列区块的类存在
     expect(view.contains('class _QueueTab'), isTrue);
-    // 调度 tab 里**不该**再放 QueuePanel（顺序编辑已移走）
+
+    // ---------- ★ 任务列表区块: 有表格, 但**不该**再有全局开关/队列 ----------
     final i = view.indexOf('class _ScheduleTab');
     final b = view.indexOf('return ListView(', i);
-    final body = view.substring(b, b + 900);
-    expect(body.contains('_globalPanel(context)'), isTrue,
-        reason: '调度 tab 缺全局开关');
+    // ⚠ 窗口从 900 加到 1400: 本轮给 `_ScheduleTab` 加了大段说明注释,
+    //   900 会在到达 `_tablePanel(context)` 之前截断 -> 假失败。
+    final body = view.substring(b, b + 1400);
     expect(body.contains('_tablePanel(context)'), isTrue,
-        reason: '调度 tab 缺任务表格');
+        reason: '任务列表区块缺任务表格');
+    expect(body.contains('_globalPanel(context)'), isFalse,
+        reason: '★ 全局开关已移到执行队列（用户要求）—— 不该还在任务列表区块里');
     expect(body.contains('QueuePanel('), isFalse,
-        reason: '执行队列已移到独立 tab, 不该还在调度 tab 里');
+        reason: '执行顺序在该区块之外, 不该还在任务列表区块里');
+
+    // ---------- ★ 执行队列区块: 必须有快捷排序 + QueuePanel ----------
+    final qi = view.indexOf('class _QueueTab');
+    expect(qi, greaterThan(0));
+    final qb = view.indexOf('return ListView(', qi);
+    final qbody = view.substring(qb, qb + 1600);
+    expect(qbody.contains('_sortActions('), isTrue, reason: '执行队列缺快捷排序');
+    expect(qbody.contains('QueuePanel('), isTrue, reason: '执行队列缺执行顺序面板');
+
+    // ---------- ★★ 全局开关必须在执行队列里（本轮核心） ----------
+    //
+    // 用户原话:
+    //   "只需要把**全局开关移到执行队列**，然后把任务列表里的滚动条统一起来"
+    expect(view.contains('_globalSwitchesInline'), isTrue,
+        reason: '★ 全局开关的紧凑渲染器必须在');
+    // 它必须在 `_QueueTab` 里被调用（而不是只在 _TaskListViewState 里定义着）
+    expect(qbody.contains('_globalSwitchesInline('), isTrue,
+        reason: '★ 全局开关必须在**执行队列**区块里被渲染'
+               '（用户: "全局开关设置放到执行队列里"）');
+    // ★ 它必须与快捷排序**同一行**（省空间）
+    //
+    // ⚠ `substring` 必须**夹住上界** —— `_sortActions` 已接近文件末尾,
+    //   直接 `+2600` 会 `RangeError`（我第一版就崩在这）。
+    final sortIdx = view.indexOf('Widget _sortActions(');
+    expect(sortIdx, greaterThan(0));
+    final sortBody =
+        view.substring(sortIdx, (sortIdx + 3000).clamp(0, view.length));
+    expect(sortBody.contains('_globalSwitchesInline('), isTrue,
+        reason: '★ 全局开关要和快捷排序**同一行**（用户: "合理摆放, 节省空间"）');
+  });
+
+  test('★ 任务列表**只有一个滚动条**（表格不再内层滚动）', () {
+    // 用户原话:
+    //   "把任务列表里的**滚动条统一起来**就行，现在滑动使用**两个滚动条很难受**"
+    //
+    // 根因: 表格原来是 `SizedBox(限高) + ListView.builder`（内层滚动）,
+    //       而外面 `_ScheduleTab` 自己还有一个 `ListView`（整页滚动）
+    //       -> 鼠标位置不同, 滚的是两个不同的东西。
+    final view = codeOnly('lib/views/tasks/task_list_view.dart');
+    final ti = view.indexOf('Widget _tablePanel(');
+    expect(ti, greaterThan(0));
+    // ⚠ 同样夹住上界（`_tablePanel` 也接近文件末尾）
+    final table = view.substring(ti, (ti + 2600).clamp(0, view.length));
+    expect(table.contains('ListView.builder'), isFalse,
+        reason: '★ 表格**不该**再有内层 `ListView.builder` —— 那就是第二个滚动条');
+    expect(table.contains('...c.tasks.map('), isTrue,
+        reason: '★ 行应**直接摊开**到外层 ListView（只留一个滚动条）');
+    // 反向守卫: 限高的 SizedBox 也一并去掉
+    expect(table.contains('_maxVisibleRows'), isFalse,
+        reason: '★ `_maxVisibleRows` 限高是内层滚动的前提, 应一并删除');
+    expect(table.contains('_rowHeight'), isFalse,
+        reason: '★ `_rowHeight` 只给内层 `itemExtent` 用, 应一并删除');
   });
 
   test('★ 「预期执行流程」已删除（与队列冗余）', () {
