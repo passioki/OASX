@@ -741,7 +741,23 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                     ],
                     Flexible(
                       child: Text(
-                        isTask ? _zhName(cmd, c) : '休息 ${e['minutes']} 分钟',
+                        // ★★★ 休息任务的标题（用户裁定 乙-A）★★★
+                        //
+                        // > "休息就是临时任务（回庭院待着），只不过可以选择
+                        // >  被定时任务插队。"
+                        // > "需要**分钟**, 不是次数。"
+                        //
+                        // ★ `Rest` 是一个**真正的任务**（`tasks/Rest/`），
+                        //   所以它走 `isTask` 分支；但标题要显示"休息 N 分钟"
+                        //   而不是光秃秃的任务名 —— 分钟数取自
+                        //   `c.taskRowOf('Rest')['target']`
+                        //   （来自 `GET /{script}/overview` 的 `target` 字段,
+                        //     = `rest.scheduler.target`）。
+                        isTask
+                            ? (_isRestTask(cmd)
+                                ? '休息 ${_restMinutesOf(c, cmd)} 分钟'
+                                : _zhName(cmd, c))
+                            : '休息 ${e['minutes']} 分钟',
                         style: Theme.of(context).textTheme.labelLarge?.copyWith(
                               // ★ 未到开放时间 -> 变灰（用户: "直接变灰放到等待中就行"）
                               color: isPending
@@ -851,6 +867,16 @@ Widget _settingsRow(BuildContext context, TaskListController c, String cmd) {
   final row = c.taskRowOf(cmd);
   final key = '${row['name']}';
   final countable = row['countable'] == true;
+  // ★★★ 休息任务: 用**同一套字段**（`scheduler.target`）表达**分钟** ★★★
+  //
+  // 用户裁定（乙-A）:
+  // > "有 period 和 window 属性, 是为了**统一管理**。"
+  // > "需要**分钟**, 不是次数。"
+  //
+  // ★ 所以休息**不新增字段** —— 它的"分钟"就在 `scheduler.target`
+  //   那个通用的"目标次数"框里。这里只是把**标签**改成"休息(分钟)"，
+  //   让用户知道自己填的是分钟（而不是打几次）。
+  final isRest = _isRestTask(cmd);
   final target = (row['target'] as num?)?.toInt() ?? 0;
   final fallback = (row['count'] as num?)?.toInt();
   final expected = (row['expected_minutes'] as num?)?.toInt() ?? 0;
@@ -863,6 +889,23 @@ Widget _settingsRow(BuildContext context, TaskListController c, String cmd) {
       runSpacing: 4,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
+        // ★ 休息走这一支（`countable=false`），所以下面那个"次数"框
+        //   对它**不适用** —— 用这个"休息(分钟)"框代替，**同一个字段**。
+        if (isRest) ...[
+          Text('休息(分钟)', style: Theme.of(context).textTheme.labelSmall),
+          _NumberCell(
+            key: ValueKey('q-rest-min-$cmd-$target'),
+            value: _restMinutesOf(c, cmd),
+            width: 60,
+            hint: '分钟',
+            min: 1,
+            max: 24 * 60,
+            onCommit: (n) async {
+              await c.setTarget(key, n);
+              await c.reload();
+            },
+          ),
+        ],
         if (countable) ...[
           Text('次数', style: Theme.of(context).textTheme.labelSmall),
           _NumberCell(
@@ -937,6 +980,36 @@ String _zhName(String command, TaskListController c) {
   return zh.isEmpty ? command : zh;
 }
 
+/// ★★★ 休息任务（`Rest`）的两个小工具 ★★★
+///
+/// ## 依据（用户裁定 乙-A）
+///
+/// > "休息就是临时任务（回庭院待着），只不过可以选择被定时任务插队。"
+/// > "有 period 和 window 属性, 是为了**统一管理**。"
+/// > "需要**分钟**, 不是次数。"
+///
+/// ★ 所以"休息"是 `tasks/Rest/` 里的一个**真正的任务**，
+///   而它的**分钟数**就是通用的 `scheduler.target`
+///   （那个"目标次数"框对休息的语义 = 分钟）。
+///
+/// ⚠ 为什么只认 `'Rest'` 这一个名字: 它是 `tasks/Rest/meta.py` 里
+///   `TaskSpec.task` 的值 —— **唯一契约**。★ 不猜别名。
+const String _kRestTask = 'Rest';
+
+/// 这个命令名是不是休息任务。
+bool _isRestTask(String command) => command == _kRestTask;
+
+/// 休息**多少分钟** —— 从 `/overview` 的 `target` 读（权威来源）。
+///
+/// ★ 拿不到时回退到 **30**（与后端 `Config.REST_DEFAULT_MINUTES` **同一值**）
+///   —— ★ 两处必须一致, 否则界面显示的数字与实际休息时长会不同。
+///   ⚠ 若后端改了那个常量, **这里也要改**（已用注释交叉引用）。
+int _restMinutesOf(TaskListController c, String command) {
+  final row = c.taskRowOf(command);
+  final t = (row['target'] as num?)?.toInt() ?? 0;
+  return t > 0 ? t : 30;
+}
+
 /// 从**全部任务**里挑一个加入队列（也能加「休息」）。
 ///
 /// ★ 本函数是**顶层**的: 队列面板的「添加任务」按钮在 header（外层
@@ -982,7 +1055,37 @@ Future<void> _addRest(BuildContext context, TaskListController c) async {
     ),
   );
   if (minutes == null) return;
-  await c.addEntry({'kind': '${rest['value']}', 'minutes': minutes});
+  // ★★★ 用户裁定 乙: 添加一条**真正的 `Rest` 任务条目** ★★★
+  //
+  // ## 改动前（旧模型）
+  //
+  // ```dart
+  // await c.addEntry({'kind': '${rest['value']}', 'minutes': minutes});
+  // ```
+  // ★ 造一个 `kind='rest'` 的**特殊条目** —— 它没有 `enable`/`period`/
+  //   `windows`，所以"格格不入"（用户原话）。
+  //
+  // ## 现在（乙-A 模型）
+  //
+  // > "休息就是临时任务（回庭院待着），只不过可以选择被定时任务插队。"
+  // > "有 period 和 window 属性, 是为了**统一管理**。"
+  //
+  // ★ 所以加的是 `Rest` **任务**（普通条目），它天然拥有
+  //   `enable` / `target`(分钟) / `period` / `windows` —— 一套通用字段。
+  //
+  // ## ★ 三步，顺序有讲究
+  //
+  // | # | 动作 | 为什么 |
+  // |---|---|---|
+  // | 1 | `setEnabled('rest', true)` | ★ **必须先启用** —— `GET /queue/candidates` 的规则是 `enable == True` 才算候选；未启用时它不在候选里（用户原话: "如果需要进队列, 那么需要先在任务列表启用"）|
+  // | 2 | `setTarget('rest', minutes)` | ★ 分钟数写进通用的 `scheduler.target`（用户: "需要分钟, 不是次数"）|
+  // | 3 | `appendToQueue('Rest')` | 加一条**普通任务条目**（`kind='task'`, `task='Rest'`）|
+  //
+  // ⚠ 键名用**下划线形式**（`rest`），不是大驼峰命令名（`Rest`）——
+  //   `setEnabled`/`setTarget` 写的是 `script.<key>.scheduler.<field>`（踩过这个混淆）。
+  await c.setEnabled('rest', true);
+  await c.setTarget('rest', minutes);
+  await c.appendToQueue(_kRestTask);
 }
 
 /// C-5: 重复条目的标签 —— `第 2 条 · 10-10 14:30`。
