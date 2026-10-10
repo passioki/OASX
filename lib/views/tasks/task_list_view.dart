@@ -557,13 +557,49 @@ class _TaskListViewState extends State<TaskListView> {
     // ⚠ 必须**订阅** `NavCtrl` —— 本页外层是 `GetBuilder<TaskListController>`,
     //   它只监听**任务控制器**；而"切哪个区块"是改 `NavCtrl.selectedMenu`。
     //   ★ 不订阅的话: 状态变了、界面纹丝不动（点了没反应）。
-    // ⚠ `NavCtrl` 可能还没注册（极端时序）—— `Get.isRegistered` 兜住,
-    //   否则 `Get.find` 抛异常、整页白屏。
+    //
+    // ★★★ `GetX` 的 `init` **绝不能为 null**（实测踩到的真故障）★★★
+    //
+    // ## 原来的写法（有 bug）
+    //
+    // ```dart
+    // init: Get.isRegistered<NavCtrl>() ? Get.find<NavCtrl>() : null,
+    // ```
+    //
+    // 意图是"没注册就兜住"。但 `GetX` 4.6.6 的 `GetXState.initState` 是:
+    //
+    // ```dart
+    // // rx_getx_widget.dart:70-79
+    // final isRegistered = GetInstance().isRegistered<T>(tag: widget.tag);
+    // if (widget.global) {            // ★ global 默认 true
+    //   if (isRegistered) { ... } else {
+    //     controller = widget.init;                       // = null
+    //     GetInstance().put<T>(controller!, tag: ...);     // ★ _TypeError!
+    //   }
+    // }
+    // ```
+    //
+    // -> `init == null` 且 `NavCtrl` 未注册时抛
+    //    `_TypeError: Null check operator used on a null value`。
+    //
+    // ## 后果（用户报的现象）
+    //
+    // > "收放汇总任务页面时 UI 的互动不联动，**有的动了，有的没变**，
+    // >   导致了**不该有的遮挡**。"
+    //
+    // ★ 这个 `GetX` 子树渲染**失败** -> 该区块不更新、而别的区块照常更新
+    //   -> 看起来就是"部分联动" + 布局错位遮挡。
+    //
+    // ## 修法
+    //
+    // 先**确保 `NavCtrl` 已注册**，再 `Get.find` 取（**永远 non-null**）。
+    // 这样既保住了"没注册也不崩"的意图，又不会给 `init` 传 null。
+    if (!Get.isRegistered<NavCtrl>()) {
+      Get.put(NavCtrl(), permanent: true);
+    }
     return GetX<NavCtrl>(
-      init: Get.isRegistered<NavCtrl>() ? Get.find<NavCtrl>() : null,
+      init: Get.find<NavCtrl>(),
       builder: (nav) {
-        // ⚠ `init` 兜底后 `nav` **不会为 null**（故不用 `?.`）——
-        //   `GetX<T>` 的 builder 参数对非空 `T` 是非空的。
         final sel = nav.selectedMenu.value;
         // ★★★ 默认显示「**执行队列**」（用户裁定: "设定 HOME 页为执行队列页"）★★★
         //
