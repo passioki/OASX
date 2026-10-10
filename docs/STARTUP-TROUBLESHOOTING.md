@@ -195,12 +195,24 @@ D:\flutter3271\bin\flutter.bat build windows --release
 
 ### 目录
 
-| 路径 | 作用 |
-|---|---|
-| ★ `D:\OASX-app` | **正式运行目录**（21 个产物文件 + 启动器）|
-| `D:\OASX-clean` | 干净源码克隆（= 镜像分支 `oas-tasks-ui-s7`）|
-| `D:\OAS-dev\OASX-src` | 开发仓库（`recover-session`）。⚠ **不要用它的 `build\` 产物** |
-| `D:\OAS-dev\OnmyojiAutoScript` | 后端（含 `pythonw` 修复）|
+| 路径 | 作用 | 分支 |
+|---|---|---|
+| ★ `D:\OASX-app` | **正式运行目录**（21 个产物文件 + 启动器）| — |
+| ★ `D:\OASX-clean` | ★ **唯一权威源码仓库**（从 GitHub 全新克隆，**非 shallow**，能推送）| `oas-tasks-ui-s7` |
+| `D:\OAS-dev\OASX-src` | 历史开发仓库。⚠ 它是 **shallow clone**（推送历史会失败）；其 ~~`build\`~~ 产物**已删除** | `recover-session` 等 |
+| `D:\OAS-dev\OnmyojiAutoScript` | 后端（含 `pythonw` 修复）| `dev` |
+
+#### ⚠ 推送纪律（踩过）
+
+远端**只有一个工作分支** `oas-tasks-ui-s7`（另有 `main`）。
+
+* ★ 在 `D:\OASX-clean` 里推送 —— 本地分支名就叫 `oas-tasks-ui-s7`：
+  `git push origin oas-tasks-ui-s7`
+* ★ 在 `D:\OAS-dev\OASX-src` 里本地分支叫 `recover-session`：
+  想更新那个唯一远端分支要写 **`git push origin recover-session:oas-tasks-ui-s7`**
+* ★ **我踩过**：在 `recover-session` 分支上执行 `git push origin oas-tasks-ui-s7`
+  → `error: src refspec oas-tasks-ui-s7 does not match any`
+  （**本地没有这个分支名**，不是网络/权限问题）
 
 ### 提交
 
