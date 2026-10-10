@@ -477,3 +477,28 @@ timed"; **只有当 timed 的可跑项为空时**它才会是 fixed。**这是�
 | **快捷排序** | `PUT /{script}/queue/sort` body `{"by":"timed"\|"fixed"}` —— **动作**, 不是**状态** |
 | **条目 `QueueEntry`** | 队列里的一条（有 `entry_id`，可重复） |
 | **僵尸任务** | 有 `config.py` 但缺 `meta.py` 的遗留任务 |
+
+---
+
+# 附录 C：休息「松手弹回最后」的 bug 记录
+
+**现象**: 休息能拖动，但**松手后弹回最后**（用户实测 A）。
+
+**★ 根因（前端）**: `TaskListController.reorderQueue()` 保存时
+```dart
+final tasks = rebuilt.where((e) => '${e['kind']}' == 'task').toList();
+final rests = rebuilt.where((e) => '${e['kind']}' != 'task').toList();
+entries..clear()..addAll(tasks)..addAll(rests);   // ★ 任务在前、休息垫底
+```
+配套后端 `Config.place_rest_last()` 也有同样的归一化。
+
+**★★ 排查教训（值得记住）**:
+* 我搜 `'__rest__'` / `sort+rest` / `rest+last` **都没命中** ——
+  因为这段用的是 `where(kind != 'task') + addAll` 的**另一种写法**。
+  ★ **搜"意图"（恒最后/垫底/归一化）比搜"标识符"可靠。**
+* ★ **"改了却没效果"时，第一件事是端到端复现，不是继续猜。**
+  我改完后端两处之后才做 `PUT /run_list` 复现，才证明后端本来就对。
+* ★ 用户的追问"**是不是改错仓库了**"把排查推回了正确方向。
+
+**修复**: OASX `2f52975` + OAS `832f467e` / `30e54978` / OASX `8007f03`。
+**验证**: 用户实测"**可以拖动了**" ✓
