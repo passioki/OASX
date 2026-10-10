@@ -659,14 +659,14 @@ mixin _GlobalPanelMixin {
               context,
               key: 'enable_fixed',
               value: c.enableFixed,
-              fallbackLabel: '启用固定任务',
+              fallbackLabel: '启用临时任务',
               onChanged: c.toggleEnableFixed,
             ),
             _switchRow(
               context,
               key: 'enable_timed',
               value: c.enableTimed,
-              fallbackLabel: '启用定时任务',
+              fallbackLabel: '启用周期任务',
               onChanged: c.toggleEnableTimed,
             ),
             const SizedBox(height: 4),
@@ -683,7 +683,7 @@ mixin _GlobalPanelMixin {
               context,
               key: 'rest_interleave',
               value: c.restInterleave,
-              fallbackLabel: '休息时可穿插定时任务',
+              fallbackLabel: '休息时可穿插周期任务',
               onChanged: c.toggleRestInterleave,
             ),
             const Divider(height: 16),
@@ -1117,12 +1117,12 @@ class _ScheduleTab extends StatelessWidget with _GlobalPanelMixin {
                 ),
                 // 四个"只看 X"互斥（同时勾两个结果必为空，用户会以为坏了）
                 FilterChip(
-                  label: const Text('只看固定任务'),
+                  label: const Text('只看临时任务'),
                   selected: c.onlyFixed,
                   onSelected: (_) => c.toggleOnlyFixed(),
                 ),
                 FilterChip(
-                  label: const Text('只看定时任务'),
+                  label: const Text('只看周期任务'),
                   selected: c.onlyTimed,
                   onSelected: (_) => c.toggleOnlyTimed(),
                 ),
@@ -1388,13 +1388,13 @@ class _QueueTab extends StatelessWidget {
           OutlinedButton.icon(
             onPressed: c.sortingQueue ? null : () => c.sortQueueBy('timed'),
             icon: const Icon(Icons.schedule, size: 16),
-            label: const Text('定时排前面'),
+            label: const Text('周期排前面'),
           ),
           const SizedBox(width: 8),
           OutlinedButton.icon(
             onPressed: c.sortingQueue ? null : () => c.sortQueueBy('fixed'),
             icon: const Icon(Icons.push_pin, size: 16),
-            label: const Text('固定排前面'),
+            label: const Text('临时排前面'),
           ),
           const SizedBox(width: 8),
           const Tooltip(

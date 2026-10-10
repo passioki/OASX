@@ -233,7 +233,7 @@ class _RunControlBarState extends State<RunControlBar> {
                 Tooltip(
                   message: '跑完当前这场战斗后不再开新任务\n'
                       '（安全停，不会卡在半途）\n'
-                      '★ 固定任务与定时任务**都会**暂停',
+                      '★ 临时任务与周期任务**都会**暂停',
                   child: FilledButton.icon(
                     // ★ 进程没跑时置灰 —— 暂停一个没在跑的东西没意义,
                     //   而且会让用户以为"点了有用"

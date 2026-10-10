@@ -16,7 +16,7 @@
 //
 // ## 这个文件钉什么
 //
-// ① UI 有**两个排序按钮**（定时排前面 / 固定排前面）
+// ① UI 有**两个排序按钮**（周期排前面 / 临时排前面）
 // ② UI **不再有**「调度优先级」下拉（那是被删掉的"模式"）
 // ③ UI **不再有**任何拖动约束提示
 // ④ controller 有 `sortQueueBy`, 且它**走专用端点**（不是通用写字段）
@@ -50,20 +50,20 @@ const _api = 'lib/api/api_client.dart';
 
 void main() {
   group('① 两个排序按钮（快捷排序）', () {
-    test('视图里有「定时排前面」与「固定排前面」两个按钮', () {
+    test('视图里有「周期排前面」与「临时排前面」两个按钮', () {
       final v = _codeOnly(_view);
-      expect(v.contains('定时排前面'), isTrue,
-          reason: '★ 缺了「定时排前面」按钮 —— 用户要的快捷排序之一');
-      expect(v.contains('固定排前面'), isTrue,
-          reason: '★ 缺了「固定排前面」按钮 —— 用户要的快捷排序之一');
+      expect(v.contains('周期排前面'), isTrue,
+          reason: '★ 缺了「周期排前面」按钮 —— 用户要的快捷排序之一');
+      expect(v.contains('临时排前面'), isTrue,
+          reason: '★ 缺了「临时排前面」按钮 —— 用户要的快捷排序之一');
     });
 
     test('两个按钮分别调 sortQueueBy(timed) / sortQueueBy(fixed)', () {
       final v = _codeOnly(_view);
       expect(v.contains("sortQueueBy('timed')"), isTrue,
-          reason: "「定时排前面」应调 sortQueueBy('timed')");
+          reason: "「周期排前面」应调 sortQueueBy('timed')");
       expect(v.contains("sortQueueBy('fixed')"), isTrue,
-          reason: "「固定排前面」应调 sortQueueBy('fixed')");
+          reason: "「临时排前面」应调 sortQueueBy('fixed')");
     });
 
     test('用 OutlinedButton（是"做一个动作", 不是"选一个模式"）', () {

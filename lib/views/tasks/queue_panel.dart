@@ -157,7 +157,7 @@ class _QueuePanelState extends State<QueuePanel> {
             if (c.queuedTaskRows.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('（队列为空 —— 点右上「添加任务」，或先启用定时任务）'),
+                child: Text('（队列为空 —— 点右上「添加任务」，或先启用周期任务）'),
               )
             else ...[
               // ★★ S6: **类别分段视觉** ★★
@@ -426,7 +426,7 @@ class _QueuePanelState extends State<QueuePanel> {
           children: [
             Text('队列里现在有 **$n** 条条目，全部移出。'),
             const SizedBox(height: 8),
-            const Text('**定时任务会被同时停用** —— 否则它们会被自动补回队列；'
+            const Text('**周期任务会被同时停用** —— 否则它们会被自动补回队列；'
                 '次数任务只离开队列。'),
             const SizedBox(height: 8),
             const Text('**不会删除任何任务配置**，随时可以重新启用 + 【添加任务】加回来。'),
@@ -545,14 +545,14 @@ class _QueuePanelState extends State<QueuePanel> {
       //
       // ★ 三模式与跨类别约束都删了 -> 那段话**已经不成立**。
       // ★ 现在只说清"这是什么"与"能怎么拖"。
-      message: '这是当前执行队列里**定时任务 / 固定任务**各有多少条。\n'
-          '${timedFirst ? "定时任务" : "固定任务"}段目前排在前面。\n'
+      message: '这是当前执行队列里**周期任务 / 临时任务**各有多少条。\n'
+          '${timedFirst ? "周期任务" : "临时任务"}段目前排在前面。\n'
           '★ **所有条目都能自由拖动**, 不限类别。\n'
           '★ 只有「休息」条目固定排在最后（它会挡住后面的任务）。',
       child: Wrap(
         children: [
-          seg('定时任务', nTimed, true, timedFirst),
-          seg('固定任务', nFixed, false, !timedFirst),
+          seg('周期任务', nTimed, true, timedFirst),
+          seg('临时任务', nFixed, false, !timedFirst),
         ],
       ),
     );
@@ -664,7 +664,7 @@ class _QueuePanelState extends State<QueuePanel> {
                       if (isTask) ...[
                         Tooltip(
                           message: '${c.priorityGroupLabelOf(cmd)}任务'
-                              '（${group == 'timed' ? '排在定时段' : '排在固定段'}）\n'
+                              '（${group == 'timed' ? '排在周期段' : '排在临时段'}）\n'
                               '${isAutoTask ? '启用后会**自动进队列**；' : '需要手动【添加任务】才进队列；'}\n'
                               '${c.inWindowNowOf(cmd) ? '当前**在**开放时段内。' : '当前**不在**开放时段内 —— 到点才会跑。'}\n'
                               '★ **拖动不受它限制** —— 任何条目都能互相拖。',
@@ -704,7 +704,7 @@ class _QueuePanelState extends State<QueuePanel> {
                       if (isTask && isAuto) ...[
                         const SizedBox(width: 6),
                         Tooltip(
-                          message: '定时任务启用后自动进入队列（不需要手动添加）',
+                          message: '周期任务启用后自动进入队列（不需要手动添加）',
                           child: Icon(Icons.autorenew,
                               size: 13,
                               color: Theme.of(context).colorScheme.primary),
@@ -743,7 +743,7 @@ class _QueuePanelState extends State<QueuePanel> {
                 // 移出队列 —— **带确认弹窗**（定时任务会同时停用; 次数任务只出队列）
                 IconButton(
                   icon: const Icon(Icons.remove_circle_outline, size: 16),
-                  tooltip: '移出队列（定时任务会同时停用）',
+                  tooltip: '移出队列（周期任务会同时停用）',
                   visualDensity: VisualDensity.compact,
                   onPressed: () async {
                     if (isTask) {

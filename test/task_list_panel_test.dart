@@ -422,7 +422,7 @@ void _overviewV2Tests() {
 
   test('总览页补齐了四个筛选', () {
     final src = codeOnly('lib/views/tasks/task_list_view.dart');
-    for (final f in ['只看已启用', '只看固定任务', '只看定时任务', '只看限时活动']) {
+    for (final f in ['只看已启用', '只看临时任务', '只看周期任务', '只看限时活动']) {
       expect(src.contains(f), isTrue, reason: '缺筛选「$f」');
     }
   });

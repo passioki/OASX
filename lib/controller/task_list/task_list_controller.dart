@@ -1144,7 +1144,7 @@ class TaskListController extends GetxController with LogMixin {
       }
     }
     // ② 兜底: 由段名推（与后端 `PRIORITY_GROUP_LABEL` 同一套值）
-    return priorityGroupOf(command) == 'timed' ? '定时' : '固定';
+    return priorityGroupOf(command) == 'timed' ? '周期' : '临时';
   }
 
   /// 该任务**当前是否在开放时段内**（`/overview` 的 `in_window_now`）。
