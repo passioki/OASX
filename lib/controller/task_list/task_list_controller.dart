@@ -1445,6 +1445,22 @@ class TaskListController extends GetxController with LogMixin {
     return '清空失败: ${res['error'] ?? '未知错误'}';
   }
 
+  /// ★★★ **取消正在运行的任务**（语义 (a): 暂停 + 移出队列）★★★
+  ///
+  /// 用户裁定:
+  /// > "当前正在运行的**任务无法被取消**"
+  /// > 取消 = **(a)**「暂停 + 移出队列」= 跑完当前这场战斗后停止且不再入队
+  ///
+  /// :return 给用户看的**中文提示**（界面直接上屏, 不再加工）
+  Future<String> cancelRunning() async {
+    final res = await _api.cancelRunning(scriptName);
+    if (res['ok'] == true) {
+      await reload();
+      return '${res['message'] ?? '已取消'}';
+    }
+    return '取消失败: ${res['error'] ?? '未知错误'}';
+  }
+
   /// 移出队列。
   ///
   /// ★ [entryId]: **精确移除某一条**（⑨）。同名条目必须带它, 否则

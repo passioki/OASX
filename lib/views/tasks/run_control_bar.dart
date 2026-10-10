@@ -117,7 +117,13 @@ class _RunControlBarState extends State<RunControlBar> {
   /// `_do()` 里 `await fn();` —— 返回的 `bool` **被丢弃**。
   /// 后端失败时 `api_client` 返回 `false`, 而界面**毫无反应**
   /// -> 用户看到"点了没反应"（本项目反复强调要避免的体验）。
-  Future<void> _do(Future<bool> Function() fn, String what) async {
+  /// ★ [successMsg] 可选: 成功后要显示的**后端说明**。
+  ///
+  /// 为什么需要它: 「暂停调度」现在**顺带把正在运行的任务退回队首**
+  /// （用户裁定: "取消功能聚合到暂停按钮"）。★ 若不显示后端那句说明,
+  /// 用户只会看到状态变灰, **不知道任务去哪了** —— 那是"点了没反应"的观感。
+  Future<void> _do(Future<bool> Function() fn, String what,
+      {String? successMsg}) async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
@@ -130,11 +136,67 @@ class _RunControlBarState extends State<RunControlBar> {
           snackPosition: SnackPosition.BOTTOM,
           duration: const Duration(seconds: 4),
         );
+      } else if (successMsg != null && successMsg.isNotEmpty) {
+        Get.snackbar(
+          what,
+          successMsg,
+          snackPosition: SnackPosition.BOTTOM,
+          duration: const Duration(seconds: 6),
+        );
       }
       await _load();          // 成功失败都刷新（状态可能已部分变化）
     } catch (e) {
       if (mounted) {
         Get.snackbar('操作失败', '「$what」异常: $e',
+            snackPosition: SnackPosition.BOTTOM,
+            duration: const Duration(seconds: 5));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// ★★★ 暂停调度 —— 并**如实报告"哪个任务退回了队首"** ★★★
+  ///
+  /// 用户原话:
+  /// > "就把这个功能**聚合到暂停调度按钮**上好了, 点击暂停调度,
+  /// >  正在运行的任务**自动回退到队列首位, 视作等待执行**,
+  /// >  这样是不是更优雅。"
+  ///
+  /// ★ 为什么不用 `_do(ApiClient().pauseScript, ...)`:
+  ///   那个只拿 `bool`, **看不到**后端返回的 `requeued` / `message`
+  ///   -> 用户点了暂停、任务消失了, **不知道它去哪了**。
+  /// ★ 这里走 `pauseScriptDetailed()`, 把后端那句中文说明**原样上屏**。
+  Future<void> _pauseAndReport() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final res = await ApiClient()
+          .pauseScriptDetailed(_c.script, mode: 'battle');
+      if (!mounted) return;
+      if (res['error'] != null) {
+        Get.snackbar('暂停失败', '${res['error']}',
+            snackPosition: SnackPosition.BOTTOM,
+            duration: const Duration(seconds: 5));
+      } else {
+        // ★ 后端 `message` 已包含"退回队列首位 / 跑完本场后停 / 未停用"三条说明
+        final msg = '${res['message'] ?? ''}'.trim();
+        final requeued = '${res['requeued'] ?? ''}';
+        Get.snackbar(
+          '已暂停调度',
+          msg.isNotEmpty
+              ? msg
+              : (requeued.isEmpty
+                  ? '已暂停调度（当前没有正在运行的任务）'
+                  : '已暂停调度；「$requeued」已退回队列首位'),
+          snackPosition: SnackPosition.BOTTOM,
+          duration: const Duration(seconds: 7),
+        );
+      }
+      await _load();
+    } catch (e) {
+      if (mounted) {
+        Get.snackbar('暂停失败', '异常: $e',
             snackPosition: SnackPosition.BOTTOM,
             duration: const Duration(seconds: 5));
       }
@@ -231,18 +293,28 @@ class _RunControlBarState extends State<RunControlBar> {
               const SizedBox(width: 12),
               if (!paused)
                 Tooltip(
-                  message: '跑完当前这场战斗后不再开新任务\n'
-                      '（安全停，不会卡在半途）\n'
-                      '★ 临时任务与周期任务**都会**暂停',
+                  // ★★★ 说明已更新（用户最终裁定: 取消功能**聚合到本按钮**）★★★
+                  //
+                  // 用户原话:
+                  //   "就把这个功能聚合到暂停调度按钮上好了, 点击暂停调度,
+                  //    正在运行的任务自动回退到队列首位, 视作等待执行,
+                  //    这样是不是更优雅。"
+                  //
+                  // ★ 所以这个按钮现在做**两件事**: 停手 + 手头那个退回队首。
+                  //   Tooltip 必须把"退回队首"和"点继续后它会第一个跑"说清 ——
+                  //   否则用户会以为"暂停 = 放弃当前任务"。
+                  message: '① 跑完当前这场战斗后不再开新任务\n'
+                      '    （安全停，不会卡在半途）\n'
+                      '② 正在运行的任务**退回队列首位**，视作等待执行\n'
+                      '    ★ 点「继续」后它会**第一个**重新开始\n'
+                      '★ 临时任务与周期任务**都会**暂停\n'
+                      '（想让它以后都不跑，请用队列里的「移除」）',
                   child: FilledButton.icon(
                     // ★ 进程没跑时置灰 —— 暂停一个没在跑的东西没意义,
                     //   而且会让用户以为"点了有用"
                     onPressed: (_busy || !procRunning)
                         ? null
-                        : () => _do(
-                            () => ApiClient()
-                                .pauseScript(_c.script, mode: 'battle'),
-                            '暂停调度'),
+                        : () => _pauseAndReport(),
                     icon: const Icon(Icons.pause, size: 18),
                     label: const Text('暂停调度'),
                   ),

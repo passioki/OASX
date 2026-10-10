@@ -324,6 +324,17 @@ class _QueuePanelState extends State<QueuePanel> {
               onPressed: () => Get.find<NavCtrl>().openTaskSettings(name),
               child: const Text('任务设置'),
             ),
+          // ★★★ 「取消任务」按钮**已删除**（用户最终裁定）★★★
+          //
+          // 用户原话:
+          // > "**就把这个功能聚合到暂停调度按钮上好了**, 点击暂停调度,
+          // >  正在运行的任务**自动回退到队列首位, 视作等待执行**,
+          // >  这样是不是更优雅。"
+          //
+          // ★ 是更优雅 —— "取消"与"暂停"本来就是同一个动作:
+          //   停手 + 手头这个退回队首待命。所以**不需要**第二个按钮。
+          // ★ 现在由 `RunControlBar` 的「暂停调度」按钮承担（见 `run_control_bar.dart`）,
+          //   后端 `put_pause` 会**同时**做:置暂停 + 把 `running_task` 退回队首。
         ],
       ),
     );

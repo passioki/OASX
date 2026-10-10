@@ -416,6 +416,23 @@ class ApiClient {
     return res.data ?? {};
   }
 
+  /// ★★★ **取消正在运行的任务**（语义 (a) = 暂停 + 移出队列）★★★
+  ///
+  /// 用户裁定:
+  /// > "当前正在运行的**任务无法被取消**和拖动"
+  /// > 取消语义 = **(a)**「暂停 + 移出队列」= 跑完当前这场战斗后停止且不再入队
+  ///
+  /// 后端一次做两件事（顺序很重要）:
+  ///   ① `request_pause(mode='battle')` —— 让它在**跑完本场战斗**后停下
+  ///   ② 把它**移出 `run_list`**（周期任务顺带停用, 规则与 `queue/remove` 同一处）
+  ///
+  /// ⚠ 它是**异步生效**的: 返回 `ok` 只表示"已请求", 任务可能还要打完当前这场。
+  ///   所以界面文案必须写"**跑完当前这场战斗后停止**", 不能写"立即停止"。
+  Future<Map<String, dynamic>> cancelRunning(String scriptName) async {
+    final res = await request(() => post('/$scriptName/running/cancel'));
+    return res.data ?? {};
+  }
+
   /// **一键清空执行队列**（⑦）。
   ///
   /// 后端会 ① `run_list` 置空 ② 把所有 `auto_queue` 任务 `enable=false`
@@ -431,6 +448,29 @@ class ApiClient {
   /// 运行控制状态(暂停/休息/延后)。
   Future<Map<String, dynamic>> getRunControl(String scriptName) async {
     final res = await request(() => get('/$scriptName/run_control'));
+    return res.data ?? {};
+  }
+
+  /// ★★★ 暂停调度（**同时把正在运行的任务退回队列首位**）★★★
+  ///
+  /// 用户原话:
+  /// > "就把这个功能**聚合到暂停调度按钮**上好了, 点击暂停调度,
+  /// >  正在运行的任务**自动回退到队列首位, 视作等待执行**"
+  ///
+  /// ★ 后端会**同时**做两件事（顺序关键, 先暂停再挪位置）:
+  ///   ① 置暂停 `mode='battle'`（跑完当前这场战斗后停）
+  ///   ② 把 `running_task` 退回 `run_list` 首位（**不停用**）
+  ///
+  /// :return 后端原始响应（含 `requeued` = 退回的任务名, `message` = 中文说明）
+  ///
+  /// ⚠ 与 `pauseScript()` 的区别: 那个只返回 `bool`（成功与否）,
+  ///   看不到"退回了哪个任务"。本方法给需要**展示说明**的调用方用。
+  Future<Map<String, dynamic>> pauseScriptDetailed(
+      String scriptName, {String mode = 'battle'}) async {
+    final res = await request(() => put(
+          '/$scriptName/run_control/pause',
+          queryParameters: {'mode': mode},
+        ));
     return res.data ?? {};
   }
 
