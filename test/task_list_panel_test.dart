@@ -332,6 +332,30 @@ Widget wrap(Widget child) => GetMaterialApp(
       home: Scaffold(body: SingleChildScrollView(child: child)),
     );
 
+/// 测试用的**定高吸顶** delegate（#6）。
+///
+/// ★ 生产用的 `_StickyQueueHeader` 会**实测**高度（`LayoutBuilder`）,
+///   那在测试里不好断言; 这里用定高版本, 验证的是**行为**:
+///   `pinned: true` 之后滚下去顶部还在不在。
+class _TestSticky extends SliverPersistentHeaderDelegate {
+  _TestSticky(this.child);
+
+  final Widget child;
+
+  @override
+  double get minExtent => 48;
+
+  @override
+  double get maxExtent => 48;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool over) =>
+      Material(color: Theme.of(context).scaffoldBackgroundColor, child: child);
+
+  @override
+  bool shouldRebuild(covariant _TestSticky old) => old.child != child;
+}
+
 // ============================================================ 运行控制条 v2
 //
 // v2 去掉了「全部停止 N 分钟」/「只停列表 N 分钟」两个**时长按钮** ——
@@ -535,10 +559,20 @@ void _sortAndPrefsTests() {
     }
   });
 
-  test('偏好按账号隔离', () {
+  test('偏好按账号**且按配置页**隔离（#9 用户裁定 2A）', () {
     final src = codeOnly('lib/controller/task_list/task_list_controller.dart');
-    expect(src.contains('prefsStore.read(scriptName)'), isTrue);
-    expect(src.contains('prefsStore.write(scriptName'), isTrue);
+    // ★ 用户裁定「2A = 算」: 排序列/升降序 · 只看筛选 · 分栏宽度
+    //   **按页隔离** —— 所以 key 是 `<账号>:<页id>`, 不再是只用账号。
+    expect(src.contains('_prefsKey'), isTrue,
+        reason: '★ 偏好必须有"按页"的 key 解析器（#9）');
+    expect(src.contains("'\$scriptName:\$pid'"), isTrue,
+        reason: "★ key 必须是 `<账号>:<页id>`（用户裁定 2A: 按页隔离）");
+    expect(src.contains('prefsStore.read(_prefsKey)'), isTrue);
+    expect(src.contains('prefsStore.write(_prefsKey'), isTrue);
+    // ★ 切换配置页必须**换 key 并重载** —— 否则界面还是旧页的排序
+    //   （看起来"切页没反应"）
+    expect(src.contains('_switchPrefsPage'), isTrue,
+        reason: '★ 切页要换偏好 key —— 这一步最容易忘, 必须有守卫');
   });
 
   test('排序只影响显示 —— 不改执行顺序', () {
@@ -605,8 +639,9 @@ void _round4Tests() {
 
   test('★ 移除队列 = 确认弹窗 + 后端停用 + 提示', () {
     final src = codeOnly('lib/views/tasks/queue_panel.dart');
-    // 弹窗
-    expect(src.contains('_confirmAndRemove'), isTrue, reason: '缺少移除确认弹窗');
+    // 弹窗（#6 重构后从 State 方法变成**顶层函数** —— 行渲染搬到了
+    // 外层的 sliver 序列里, 不再是 `_QueuePanelState` 的私有方法）
+    expect(src.contains('confirmAndRemove'), isTrue, reason: '缺少移除确认弹窗');
     expect(src.contains('移出并停用'), isTrue, reason: '弹窗要明确说"会同时停用"');
     // 走后端（后端会 `sch.enable = False`）
     expect(src.contains('c.removeFromQueue('), isTrue);
@@ -648,7 +683,10 @@ void _round4Tests() {
     // ★ 2026-10-10: 文案从"可跑 / 未到窗口"改为"待执行 / 未到开放时间"
     expect(q.contains('待执行'), isTrue);
     expect(q.contains('未到开放时间'), isTrue);
-    expect(q.contains('ReorderableListView.builder'), isTrue,
+    // ★ #6 之后: 可拖列表由 `SliverReorderableList` 承担
+    //   （`ReorderableListView` 自己就是滚动体, 塞不进吸顶用的
+    //    `CustomScrollView`）
+    expect(q.contains('SliverReorderableList'), isTrue,
         reason: '队列必须可拖拽');
   });
 
@@ -684,6 +722,80 @@ void _round4Tests() {
         reason: '启用但不在队列的次数任务不该出现在队列里（只在【添加任务】）');
     expect(find.textContaining('不在队列里'), findsOneWidget);
     expect(find.text('去添加'), findsOneWidget);
+  });
+
+  // ============================================================ #6 吸顶（真渲染）
+  //
+  // ★★ 为什么这条必须是**widget 测试**而不是源码守卫 ★★
+  //
+  // `SliverPersistentHeader` / `SliverReorderableList` 的坑**全在运行时**:
+  //   * `SliverReorderableList` 断言 `child.key != null`
+  //     （我第一版把 key 挂在行**内部**的 `Container` 上 -> 整页抛断言,
+  //      `analyze` **完全查不出来**）
+  //   * "滚动套滚动" -> `constraints: 0<=h<=Infinity`
+  //   * `pinned: true` 写错/漏写 -> 顶部照样被滚走（用户报的 bug 原样复现）
+  //
+  // 所以这里真渲染一遍: 吸顶区 + 队列那一组 sliver 住进**同一个**
+  // `CustomScrollView`, 滚到底之后断言顶部**还在**。
+  testWidgets('★ #6 顶部内容滚动后**仍在**（吸顶真渲染, 非源码守卫）',
+      (tester) async {
+    // 造 30 条队列 —— 必须能真的滚起来, 否则"吸顶"无从验证
+    final entries = <Map<String, dynamic>>[
+      for (var i = 0; i < 30; i++)
+        {
+          'kind': 'task',
+          'task': 'T$i',
+          'entry_id': '20261010T1430${i.toString().padLeft(2, '0')}-T$i',
+        },
+    ];
+    final c = FakeTaskListController(
+      entries: entries,
+      tasks: [
+        for (var i = 0; i < 30; i++) taskRow('T$i', zh: '任务$i', queued: true),
+      ],
+    );
+
+    await tester.pumpWidget(GetMaterialApp(
+      home: Scaffold(
+        // ★ 用 `Builder` 拿一个**树内**的 context 再调 `QueuePanel.slivers`
+        //   （它只是把 context 往下传给子 widget, 真正用是在子 widget 的
+        //   `build` 里 —— 但构造时确实需要一个 context 参数）。
+        body: Builder(
+          builder: (ctx) => CustomScrollView(
+            slivers: [
+              SliverPersistentHeader(
+                pinned: true,
+                delegate: _TestSticky(
+                  const SizedBox(
+                    height: 48,
+                    child: Center(child: Text('吸顶测试标记')),
+                  ),
+                ),
+              ),
+              // ★ 队列本体 —— 与 `_QueueTab` 用的是**同一组 sliver**
+              ...QueuePanel.slivers(ctx, c),
+            ],
+          ),
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    // 队列真渲染出来了（`SliverReorderableList` 的 key 断言没炸）
+    expect(find.text('任务0'), findsOneWidget,
+        reason: '★ 队列行没渲染 —— 多半是 `SliverReorderableList` 的'
+            '`All list items must have a key` 断言炸了'
+            '（key 必须挂在 `itemBuilder` 返回的 widget 上）');
+    expect(find.text('吸顶测试标记'), findsOneWidget);
+
+    // 滚到底: 顶部那块必须**还在**
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -4000));
+    await tester.pumpAndSettle();
+
+    expect(find.text('吸顶测试标记'), findsOneWidget,
+        reason: '★★ 滚下去之后顶部**必须还在** —— 这就是用户要的'
+            '「滚动时上边的按钮和展示会一直存在」。❌ 不见了 = '
+            '`pinned: true` 没生效（又变回"随内容滚"）');
   });
 
   test('任务选择器**不再**按 countable 过滤（曾静默丢用户的配置）', () {
@@ -1077,15 +1189,22 @@ void _phase2Tests() {
     //   "待执行（马上要跑）和执行顺序合并一起"
     //
     // 此前是**两套**: 一个可拖的「执行顺序」+ 两个只读的「待执行/等待中」观察窗。
-    // 现在**只有一套**: 一个 `ReorderableListView` 渲染 `c.queuedTaskRows`,
+    // 现在**只有一套**: 一个可拖列表渲染 `c.queuedTaskRows`,
     // 每行带状态徽标（[待执行] / [未到开放时间]）。
     //
     // ★ 早先那句"删掉 ≠ 合并"是针对**直接删掉监控**说的;
     //   用户现在要的是**真正的合并进队列**, 不是删掉。
+    //
+    // ★ #6 之后那个列表是 `SliverReorderableList`（不是
+    //   `ReorderableListView` —— 后者自己就是滚动体, 塞不进吸顶用的
+    //   `CustomScrollView`）。**"只有一套"这条断言不变**。
     final q = codeOnly('lib/views/tasks/queue_panel.dart');
 
     // 只有一个可拖列表
-    expect(RegExp(r'ReorderableListView').allMatches(q).length, 1,
+    expect(RegExp(r'ReorderableListView').allMatches(q).length, 0,
+        reason: '★ 可拖列表必须换成 `SliverReorderableList` —— '
+            '`ReorderableListView` 自己就是滚动体, 塞不进外层 `CustomScrollView`');
+    expect(RegExp(r'SliverReorderableList\(').allMatches(q).length, 1,
         reason: '应该**只有一套**可拖列表（合并后不该还有第二个）');
 
     // 术语: 等待中 -> 「未到开放时间」
@@ -1134,13 +1253,20 @@ void _phase2Tests() {
     final qEnd = view.indexOf('\nclass ', qi + 10);
     final qbody = view.substring(qi, qEnd > 0 ? qEnd : view.length);
     expect(qbody.contains('_sortActions('), isTrue, reason: '执行队列缺快捷排序');
-    expect(qbody.contains('QueuePanel('), isTrue, reason: '执行队列缺执行顺序面板');
+    // ★ #6: `QueuePanel` 从"整个面板"变成"**一组 sliver**"
+    //   （它的内容要塞进外层吸顶用的 `CustomScrollView`）
+    expect(qbody.contains('QueuePanel.slivers('), isTrue,
+        reason: '执行队列缺执行顺序面板');
     // ★ 反向守卫: 该区块**不许**再有 ListView/SingleChildScrollView
-    //   （滚动套滚动会让 `ReorderableListView` 拿到无界高度）
+    //   （滚动套滚动会让 `SliverReorderableList` 拿到无界高度）
     expect(qbody.contains('return ListView('), isFalse,
-        reason: '★ `_QueueTab` 不该自己套滚动容器 —— `QueuePanel` 已是唯一滚动体');
+        reason: '★ `_QueueTab` 不该自己套滚动容器 —— '
+            '它自己那个 `CustomScrollView` 是唯一的滚动体');
     expect(qbody.contains('SingleChildScrollView'), isFalse,
         reason: '★ 同上');
+    // ★ #6: 外层必须是 `CustomScrollView`（吸顶的唯一落点）
+    expect(qbody.contains('return CustomScrollView('), isTrue,
+        reason: '★ 吸顶需要 `CustomScrollView` + `SliverPersistentHeader`');
 
     // ---------- ★★ 全局开关必须在执行队列里（本轮核心） ----------
     //

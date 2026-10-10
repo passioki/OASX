@@ -639,6 +639,79 @@ class ApiClient {
 // ★ 条目类型的值/名称/说明**不在这里硬编码** —— 从 `/schema` 的
 //   `list.entry_kinds` 读, 避免前端与后端各维护一份映射。
 
+  // ---------------------------------  执行顺序**配置页**（#9）
+  //
+  // 用户原话:
+  // > "添加**执行顺序配置页 1/2/3/……**，可以添加、删除和切换配置页"
+  //
+  // ★ 后端已就绪（`schema_router.py` 的 `/queue/profiles` 一族）:
+  //
+  //     GET    /{script}/queue/profiles               列出（含 active_id）
+  //     POST   /{script}/queue/profiles               新建（不传 name 自动编号）
+  //     PUT    /{script}/queue/profiles/activate      切换（★ 自动先存当前整页）
+  //     PUT    /{script}/queue/profiles/rename        改名
+  //     DELETE /{script}/queue/profiles/{id}          删除（至少留一页）
+  //
+  // ★★★ 所有响应的 `message` **已是**要显示给用户的中文说明 ★★★
+  //   调用方**直接用**, 不要自己再拼一遍（两处文案必然漂移）。
+  //
+  // ★ 一页 = **整页快照**: 队列 + 每任务调度（启停/次数/优先级/预期耗时）
+  //   + 全局开关（用户裁定「1甲」）—— 所以 `activate` 之后必须**整体 reload**。
+
+  /// 列出执行顺序配置页。
+  ///
+  /// :return `{profiles: [{id,name,count,active}], active_id}`
+  Future<Map<String, dynamic>> getQueueProfiles(String scriptName) async {
+    final res = await request(() => get('/$scriptName/queue/profiles'));
+    return res.data ?? {};
+  }
+
+  /// **新建一页**（后端把**当前** `run_list` 存为新页并切过去）。
+  ///
+  /// :param name: 可选; 不传则后端自动编号（`1` / `2` / `3` / …）
+  Future<Map<String, dynamic>> createQueueProfile(
+    String scriptName, {
+    String? name,
+  }) async {
+    final res = await request(() => post(
+          '/$scriptName/queue/profiles',
+          data: {if (name != null && name.isNotEmpty) 'name': name},
+        ));
+    return res.data ?? {};
+  }
+
+  /// **切换到某一页**。
+  ///
+  /// ★ 后端在**同一个请求**里做两步（顺序关键, 原子）:
+  ///   ① 先把**当前整页**存回当前页（否则刚拖的顺序 / 刚改的开关会丢）
+  ///   ② 再把目标页的整页快照写回配置
+  Future<Map<String, dynamic>> activateQueueProfile(
+      String scriptName, String id) async {
+    final res = await request(() => put(
+          '/$scriptName/queue/profiles/activate',
+          data: {'id': id},
+        ));
+    return res.data ?? {};
+  }
+
+  /// **给配置页改名**（只改名字, 不动页内容）。
+  Future<Map<String, dynamic>> renameQueueProfile(
+      String scriptName, String id, String name) async {
+    final res = await request(() => put(
+          '/$scriptName/queue/profiles/rename',
+          data: {'id': id, 'name': name},
+        ));
+    return res.data ?? {};
+  }
+
+  /// **删除一页**。★ 后端保证**至少留一页**（删到最后一页会返回 error）。
+  Future<Map<String, dynamic>> deleteQueueProfile(
+      String scriptName, String id) async {
+    final res = await request(
+        () => delete('/$scriptName/queue/profiles/$id'));
+    return res.data ?? {};
+  }
+
   /// 读运行列表。
   Future<Map<String, dynamic>> getRunList(String scriptName) async {
     final res = await request(() => get('/$scriptName/run_list'));

@@ -1362,39 +1362,305 @@ class _QueueTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // ★★★ 本 tab **不再自己套滚动容器**（修用户报的 #7）★★★
+    // ★★★ #6: 「快捷排序 + 全局开关 + 配置页」**吸顶**（用户要求）★★★
     //
     // ## 用户原话
     //
-    // > "在**拖动任务超出窗口范围时，滚动条并不会随之滚动**，导致从队尾移到
-    // >  队首时需要拖动好几次。"
+    // > "将执行顺序页面拎出来，**滚动时，上边的按钮和展示会一直存在**
+    // >  而不是被滚动上去。"
     //
-    // ## 根因与分工
+    // ★ "一直存在" = **吸顶**（pinned）, 不是"随内容滚"。上一轮我把它放进了
+    //   `QueuePanel(header:)` —— 那是**跟随滚动**, 用户要的不是那个。
     //
-    // Flutter 的**拖动自动滚动**挂在**可滚动列表自己**身上。原来可拖的行住在
-    // 一个 `shrinkWrap: true` + `NeverScrollableScrollPhysics` 的
-    // `ReorderableListView` 里（**不可滚**）-> 拖到边缘**不滚**。
+    // ## 为什么现在是 `CustomScrollView`
     //
-    // ★ 现在: **`QueuePanel` 自己是唯一的滚动容器**（它内部那个
-    //   `ReorderableListView` 已改成可滚 + 带 `header`/`footer`）。
-    //   本 tab 只负责把「快捷排序 + 全局开关」交给它的 `header`。
+    // `SliverPersistentHeader(pinned: true)` 只能活在 `CustomScrollView` 里；
+    // 而 `ReorderableListView` **自己就是一个滚动体**, 塞不进别人的 sliver
+    // 序列。所以两件事一起换:
     //
-    // ⚠ 这里**绝不能**再用 `ListView`/`SingleChildScrollView` 包它 ——
-    //   那就是"滚动套滚动", Flutter 会抛"垂直方向无界高度"
-    //   （本项目已因嵌套滚动栽过: `queue_panel` 里有记载）。
-    return QueuePanel(
-      controller: c,
-      // ★ 快捷排序 + 全局开关 —— 进队列的 `header`（同一个滚动体, 一起滚）
-      //
-      // ★★★ S7: **快捷排序**（用户要求: 与执行顺序**同一个 tab**）★★★
-      //
-      // 用户原话:
-      // > "**快捷排序应该和执行顺序在同一个 tab 里**。"
-      //
-      // ★ 它原来在「调度」tab 的全局设置区 —— 而「执行顺序」（可拖
-      //   列表）在「执行队列」tab。**分在两个 tab = 找不到**。
-      header: _sortActions(context, c),
+    //   `ReorderableListView.builder` -> `SliverReorderableList`
+    //     （见 `queue_panel.dart` 的说明: 拖动自动滚仍走
+    //       `Scrollable.of(context)` = 本 `CustomScrollView`, 所以 #7 不退化）
+    //
+    // ## 结构
+    //
+    // ```
+    // CustomScrollView
+    //  ├─ SliverPersistentHeader(pinned: true)
+    //  │    ├─ _profilesRow(...)        ← ★ #9 配置页 chips（切页/新建/管理）
+    //  │    └─ _sortActions(...)        ← 快捷排序 + 全局开关
+    //  ├─ SliverToBoxAdapter(标题/状态/分段条)   ← QueuePanel.slivers 提供
+    //  ├─ SliverPadding(SliverReorderableList)  ← 队列行
+    //  └─ SliverToBoxAdapter(尾部提示)
+    // ```
+    //
+    // ⚠ 本 tab **绝不能**再套 `ListView`/`SingleChildScrollView` ——
+    //   那就是"滚动套滚动", Flutter 会抛"垂直方向无界高度"（踩过）。
+    return CustomScrollView(
+      slivers: [
+        // ★★★ 吸顶区（pinned: true）★★★
+        SliverPersistentHeader(
+          pinned: true,
+          delegate: _StickyQueueHeader(
+            child: Container(
+              color: Theme.of(context).scaffoldBackgroundColor,
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // ★ #9: 执行顺序**配置页**（1/2/3/… + 新建 + 管理）
+                  _profilesRow(context, c),
+                  const SizedBox(height: 4),
+                  // 快捷排序 + 全局开关（原来就在这一行）
+                  _sortActions(context, c),
+                ],
+              ),
+            ),
+          ),
+        ),
+        // ★ 队列本体（行 + 标题/状态/尾部）—— 由 `QueuePanel` 提供那一组 sliver
+        ...QueuePanel.slivers(context, c),
+      ],
     );
+  }
+
+  // ============================================================ #9 配置页
+  //
+  // 用户原话:
+  // > "添加**执行顺序配置页 1/2/3/……**，可以添加、删除和切换配置页"
+  //
+  // ★ 用户已确认的设计（照做, 不再问）:
+  //   * 布局 **A** —— 吸顶区下面**单起一行** `配置页 ▪1▪ ▪2▪ ▪3▪ [＋新建] [⋯管理]`
+  //   * 一页存什么 **甲** —— 队列 + 每任务调度 + **全局开关**（后端整页快照）
+  //   * 前端三项偏好 **A** —— 按页隔离（controller 的 `_prefsKey`）
+  //   * 初始状态 —— **当前执行顺序就是页1**（后端自动建）
+  //   * 重命名 **需要**（后端 `PUT /queue/profiles/rename` 已就绪）
+
+  /// 配置页 chips 行 —— `配置页 ▪1▪ ▪2▪ … [＋新建] [⋯ 管理]`。
+  ///
+  /// * `▪N▪` 实心 = **当前页**；单击 = 切页；★ **双击 = 改名**
+  /// * `[＋新建]` = `POST /queue/profiles`（不传名字, 后端自动编号）
+  /// * `[⋯ 管理]` = 重命名 / 删除（菜单, 窄屏也放得下）
+  ///
+  /// ⚠ 文案一律用**后端返回的 `message`** —— 不再自己拼一遍（两处必然漂移）。
+  Widget _profilesRow(BuildContext context, TaskListController c) {
+    final scheme = Theme.of(context).colorScheme;
+    final list = c.queueProfiles;
+    // ★ 后端旧版本没有这组端点 -> 列表为空。那时**不显示整行**
+    //   （不显示"配置页"三个字比显示一个空壳好）。
+    if (list.isEmpty) return const SizedBox.shrink();
+
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text('配置页',
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                )),
+        for (final p in list) _profileChip(context, c, p),
+        const SizedBox(width: 2),
+        Tooltip(
+          message: '把**当前**执行顺序 + 启停/次数/全局开关存成一个新配置页，并切过去。',
+          child: OutlinedButton.icon(
+            onPressed: c.loading ? null : () => _createProfile(context, c),
+            icon: const Icon(Icons.add, size: 15),
+            label: const Text('新建'),
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 30),
+            ),
+          ),
+        ),
+        Tooltip(
+          message: '管理**当前**配置页：重命名 / 删除。',
+          child: OutlinedButton.icon(
+            onPressed: () => _manageProfiles(context, c),
+            icon: const Icon(Icons.more_horiz, size: 15),
+            label: const Text('管理'),
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 30),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 一枚页码 chip —— `▪N▪`（当前页实心 + 主色）。
+  ///
+  /// ★ 单击 = 切页；**双击 = 改名**（用户确认「需要重命名」）。
+  ///   ⚠ 不能只用 `onDoubleTap`（单击会延迟 ~300ms 才响应, 体感"点了没反应"）
+  ///   —— 所以两个手势都接上: 单击立即切页, 双击再改名。
+  Widget _profileChip(
+      BuildContext context, TaskListController c, Map<String, dynamic> p) {
+    final scheme = Theme.of(context).colorScheme;
+    final id = '${p['id']}';
+    final name = '${p['name'] ?? id}';
+    final active = p['active'] == true || id == c.queueProfileId;
+    final count = (p['count'] as num?)?.toInt() ?? 0;
+
+    return Tooltip(
+      message: '配置页「$name」（$count 条队列）\n'
+          '★ 一页 = 队列 + 每任务启停/次数 + 全局开关（整页快照）\n'
+          '单击切换 · **双击改名**',
+      child: InkWell(
+        onTap: active ? null : () => _activateProfile(context, c, id, name),
+        onDoubleTap: () => _renameProfile(context, c, id, name),
+        borderRadius: BorderRadius.circular(4),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            // ★ 实心 = 当前页（用户确认的视觉）
+            color: active ? scheme.primary : null,
+            border: Border.all(
+                color: active ? scheme.primary : scheme.outlineVariant),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            name,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: active ? scheme.onPrimary : scheme.onSurfaceVariant,
+                  fontWeight: active ? FontWeight.w700 : FontWeight.w400,
+                ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 切页 —— ★ 成功后 `activateQueueProfile` 内部会 `reload()`。
+  Future<void> _activateProfile(BuildContext context, TaskListController c,
+      String id, String name) async {
+    final msg = await c.activateQueueProfile(id);
+    if (!context.mounted) return;
+    // ★ 提示直接用后端的 `message`（它已说明"上一页已自动保存"）
+    Get.snackbar('已切到「$name」', msg,
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 4));
+  }
+
+  /// 新建一页（后端自动编号 + 立即切过去）。
+  Future<void> _createProfile(BuildContext context, TaskListController c) async {
+    final msg = await c.createQueueProfile();
+    if (!context.mounted) return;
+    Get.snackbar('已新建配置页', msg,
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 4));
+  }
+
+  /// 改名（后端 `PUT /queue/profiles/rename`）。
+  Future<void> _renameProfile(BuildContext context, TaskListController c,
+      String id, String name) async {
+    final ctrl = TextEditingController(text: name);
+    final next = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('重命名配置页'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          maxLength: 24,
+          decoration: const InputDecoration(
+            isDense: true,
+            labelText: '页名',
+            helperText: '比如「日常 / 周末 / 肝活动」—— 一眼知道那页是干什么的',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (next == null || next.isEmpty) return;
+    final msg = await c.renameQueueProfile(id, next);
+    if (!context.mounted) return;
+    Get.snackbar('已改名', msg,
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 4));
+  }
+
+  /// `[⋯ 管理]` —— 重命名 / 删除**当前页**。
+  Future<void> _manageProfiles(
+      BuildContext context, TaskListController c) async {
+    final id = c.queueProfileId;
+    if (id.isEmpty) return;
+    final name = c.queueProfileName;
+    final action = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text('管理配置页「$name」'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'rename'),
+            child: const Text('重命名…'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'delete'),
+            child: const Text('删除这一页'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+        ],
+      ),
+    );
+    if (!context.mounted || action == null) return;
+    if (action == 'rename') {
+      await _renameProfile(context, c, id, name);
+      return;
+    }
+    await _deleteProfile(context, c, id, name);
+  }
+
+  /// 删除当前页（★ 带二次确认 —— 后端保证至少留一页）。
+  ///
+  /// ★ 弹窗必须说清**两件事**:
+  ///   1. 删的是**整页快照**（队列 + 启停/次数 + 全局开关）
+  ///   2. **不删任何任务配置**, 随时可以再建一页
+  Future<void> _deleteProfile(BuildContext context, TaskListController c,
+      String id, String name) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('删除配置页「$name」？'),
+        content: const Text('会删掉这一页的**整页快照**'
+            '（队列顺序 + 每任务启停/次数/优先级 + 全局开关）。\n\n'
+            '★ **不会删除任何任务配置** —— 随时可以新建一页再编排。\n'
+            '★ 至少要保留一个配置页。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(ctx).colorScheme.error),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    final msg = await c.deleteQueueProfile(id);
+    if (!context.mounted) return;
+    Get.snackbar('已删除配置页', msg,
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 4));
   }
 
   /// ★ **快捷排序**（两个按钮）—— 与执行顺序同屏。
@@ -1606,6 +1872,78 @@ class _QueueTab extends StatelessWidget {
       ),
     );
   }
+}
+
+// ============================================================ #6 吸顶区
+
+/// **吸顶区**的 `SliverPersistentHeaderDelegate`（#6）。
+///
+/// 用户原话:
+/// > "将执行顺序页面拎出来，**滚动时，上边的按钮和展示会一直存在**
+/// >  而不是被滚动上去。"
+///
+/// ## 它做什么
+///
+/// * `pinned: true` -> 滚动时**一直贴在顶部**（这就是用户要的"一直存在"）
+/// * 折叠状态与展开状态**一样高**（`minExtent == maxExtent`）——
+///   吸顶区里是**两行可点控件**（配置页 chips + 快捷排序/全局开关）,
+///   压扁它们只会让按钮被裁掉、点不到。所以不做折叠动画。
+///
+/// ## ⚠ 高度**必须实测**, 不能写死
+///
+/// `SliverPersistentHeaderDelegate` 要求**先**给出 `minExtent`/`maxExtent`
+/// （在 `build` **之前**）, 但这一行的真实高度取决于:
+/// 系统字号缩放、`Wrap` 折了几行、`DropdownButton` 的固有高度。
+///
+/// ★ 所以: 在 `build` 里用 `LayoutBuilder` **量一次**真实高度, 存进
+///   `_extent`, 下一帧起用实测值。量之前用 [_fallback] 兜底 ——
+///   这样**首帧**也不会因为"高度是 0"而把内容裁掉。
+///
+/// ★ 这是 Flutter 里做"高度不定的吸顶区"的标准手法; 本项目**没有**
+///   引第三方包（如 `sliver_tools`）, 所以手写这 20 行。
+class _StickyQueueHeader extends SliverPersistentHeaderDelegate {
+  _StickyQueueHeader({required this.child});
+
+  final Widget child;
+
+  /// 实测高度（0 = 还没量过）。
+  double _extent = 0;
+
+  /// 量之前的兜底高度 —— 宁可多留一点空白, 也不能裁掉按钮。
+  static const double _fallback = 76;
+
+  @override
+  double get minExtent => _extent <= 0 ? _fallback : _extent;
+
+  @override
+  double get maxExtent => minExtent;
+
+  @override
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return SizedBox.expand(
+      child: Material(
+        // ★ 必须**不透明** —— 否则下面的队列行会从吸顶区底下透出来
+        //   （看起来像字叠字）。
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: LayoutBuilder(
+          builder: (ctx, constraints) {
+            final h = constraints.maxHeight;
+            // ★ 只在"量到的和已有的不一样"时写 —— 避免每帧都改,
+            //   那会让 `shouldRebuild` 永远为真（无谓重建）。
+            if (h.isFinite && h > 0 && (h - _extent).abs() > 0.5) {
+              _extent = h;
+            }
+            return child;
+          },
+        ),
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _StickyQueueHeader old) =>
+      old.child != child || (old._extent - _extent).abs() > 0.5;
 }
 
 // ============================================================ 共用

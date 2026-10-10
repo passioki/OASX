@@ -4,9 +4,22 @@
 //
 // | # | 用户原话 | 落点 |
 // |---|---|---|
-// | 6 | "将执行顺序页面拎出来，**滚动时，上边的按钮和展示会一直存在**而不是被滚动上去" | 见下方说明 |
-// | 7 | "在**拖动任务超出窗口范围时，滚动条并不会随之滚动**，导致从队尾移到队首时需要拖动好几次" | `QueuePanel` 是可滚动列表 |
+// | 6 | "将执行顺序页面拎出来，**滚动时，上边的按钮和展示会一直存在**而不是被滚动上去" | `SliverPersistentHeader(pinned: true)` |
+// | 7 | "在**拖动任务超出窗口范围时，滚动条并不会随之滚动**，导致从队尾移到队首时需要拖动好几次" | `SliverReorderableList` 住在可滚 viewport 里 |
 // | 8 | "设定 **HOME 页为执行队列页**" | 默认区块 = `_QueueTab` |
+//
+// ⚠⚠ **本轮(#6)换了实现方式, 断言跟着换** ⚠⚠
+//
+// 上一轮把「快捷排序 + 全局开关」放进 `QueuePanel(header:)` —— 那是
+// **跟随滚动**, 不是用户要的"一直存在"。本轮换成:
+//
+//     外层 `CustomScrollView` + `SliverPersistentHeader(pinned: true)`
+//     行 -> `SliverReorderableList`（`ReorderableListView` 从 queue_panel 消失）
+//
+// ★ 为什么 `SliverReorderableList` 仍能**越界自动滚**（#7 不退化）:
+//   它的 `autoScrollerVelocityScalar` 走 `Scrollable.of(context)` ——
+//   也就是**外层** `CustomScrollView` 的 position。所以"自己不是滚动容器"
+//   不再等于"不能自动滚"。
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -22,28 +35,34 @@ String codeOnly(String path) {
 
 void main() {
   group('#7 拖动越界**必须自动滚动**', () {
-    test('QueuePanel 的那个 ReorderableListView **可以滚**', () {
+    test('队列行住在 `SliverReorderableList` 里（可拖 + 由外层滚动）', () {
       final src = codeOnly('lib/views/tasks/queue_panel.dart');
-      // ★ Flutter 的拖动自动滚动挂在"可滚动列表自己"身上
-      //   -> 它**不许**被设成不可滚
+      // ★ Flutter 的拖动自动滚动读的是 `Scrollable.of(context)` ——
+      //   所以行**必须**住在一个可滚 viewport 里, 且列表自己
+      //   **不许**被设成不可滚。
       expect(src.contains('NeverScrollableScrollPhysics'), isFalse,
-          reason: '★ 那个 `ReorderableListView` 不许再是"不可滚" —— '
-              '它是拖动自动滚动的唯一依据（用户报的 #7）');
+          reason: '★ 不许把滚动体设成"不可滚" —— '
+              '拖动自动滚动就靠它（用户报的 #7）');
       expect(src.contains('shrinkWrap: true'), isFalse,
           reason: '★ 不许再 `shrinkWrap: true` —— 那是"住在别的滚动体里"'
               '的写法, 会让自动滚动失效');
-      expect(src.contains('ReorderableListView.builder'), isTrue);
+      expect(src.contains('SliverReorderableList'), isTrue,
+          reason: '★ 行必须由 `SliverReorderableList` 渲染 —— '
+              '它才能住在 `CustomScrollView` 的 sliver 序列里（#6 吸顶的前提）');
+      expect(src.contains('ReorderableListView'), isFalse,
+          reason: '★ `ReorderableListView` **自己就是一个滚动体** —— '
+              '塞不进外层 `CustomScrollView`（滚动套滚动 -> 无界高度约束错）');
       expect(src.contains('onReorder: c.reorderQueue'), isTrue);
     });
 
-    test('QueuePanel 自带 header/footer（不可拖部分随内容滚）', () {
+    test('不可拖的部分走 SliverToBoxAdapter（同一个滚动体, 随内容滚）', () {
       final src = codeOnly('lib/views/tasks/queue_panel.dart');
-      expect(src.contains('header:'), isTrue,
-          reason: '★ 不可拖的部分要进 `header`（同一个滚动体）');
-      expect(src.contains('footer:'), isTrue, reason: '★ 尾部同理');
+      expect(src.contains('SliverToBoxAdapter'), isTrue,
+          reason: '★ 标题 / 调度状态 / 分段条 / 尾部提示要进 '
+              '`SliverToBoxAdapter`（同一个滚动体）');
     });
 
-    test('_QueueTab **不许**自己再套滚动容器', () {
+    test('_QueueTab 是**唯一**的滚动体, 且用的是 CustomScrollView', () {
       final view = codeOnly('lib/views/tasks/task_list_view.dart');
       final qi = view.indexOf('class _QueueTab');
       expect(qi, greaterThan(0));
@@ -51,11 +70,14 @@ void main() {
       final qbody = view.substring(qi, qEnd > 0 ? qEnd : view.length);
       expect(qbody.contains('return ListView('), isFalse,
           reason: '★ `_QueueTab` 套 `ListView` 就是"滚动套滚动" —— '
-              '`ReorderableListView` 会拿到无界高度并抛断言 '
-              '（实测抓到 2 条 widget 测试崩）');
+              '`SliverReorderableList` 会拿到无界高度并抛断言');
       expect(qbody.contains('SingleChildScrollView'), isFalse,
           reason: '★ 同上');
-      expect(qbody.contains('QueuePanel('), isTrue);
+      expect(qbody.contains('return CustomScrollView('), isTrue,
+          reason: '★ #6 吸顶要求外层是 `CustomScrollView`'
+              '（`SliverPersistentHeader` 只能住在它里面）');
+      expect(qbody.contains('QueuePanel.slivers('), isTrue,
+          reason: '★ 队列本体作为一组 sliver 交给这个 `CustomScrollView`');
     });
   });
 
@@ -86,23 +108,46 @@ void main() {
     });
   });
 
-  group('#6 滚动时顶部**不被滚走**（说明性守卫）', () {
+  group('#6 滚动时顶部**不被滚走**（= 吸顶, pinned）', () {
     // ★ 用户原话:
     //   "将执行顺序页面拎出来，滚动时，上边的按钮和展示会一直存在
     //    而不是被滚动上去。"
     //
-    // ★ 落地方式（本轮）: 「快捷排序 + 全局开关」进 `QueuePanel.header`
-    //   —— 它属于**同一个滚动体**, 随内容滚, 但**永远在队列行的上方**
-    //   （不会像"页内 tab"那样切走）。★ 这是"拎出来"的含义:
-    //    该页**只有一套**滚动与导航, 顶部区域始终存在。
-    test('快捷排序 + 全局开关在 header 里（始终在队列上方）', () {
+    // ★★ 本轮(#6)的落地方式 ★★
+    //   「快照页码 chips + 快捷排序 + 全局开关」进
+    //   `SliverPersistentHeader(pinned: true)` —— **钉在顶部**,
+    //   而不是上一轮那个 `QueuePanel.header`（那是**跟随滚动**,
+    //   用户要的不是那个）。
+    //
+    // ★ 守卫必须钉住 `pinned: true` —— 少了它 `SliverPersistentHeader`
+    //   一样能编译, 但滚上去就没了（= 用户报的 bug 原样复现）。
+    test('顶部内容是 `SliverPersistentHeader(pinned: true)`', () {
       final view = codeOnly('lib/views/tasks/task_list_view.dart');
+      expect(view.contains('SliverPersistentHeader'), isTrue,
+          reason: '★ 缺 `SliverPersistentHeader` —— 那#6 就没有落点');
+      expect(view.contains('pinned: true'), isTrue,
+          reason: '★ `pinned: true` 才是"一直存在"；缺了它顶部照样被滚走');
       final qi = view.indexOf('class _QueueTab');
       final qEnd = view.indexOf('\nclass ', qi + 10);
       final qbody = view.substring(qi, qEnd > 0 ? qEnd : view.length);
-      expect(qbody.contains('header:'), isTrue,
-          reason: '★ 顶部内容（快捷排序 + 全局开关）要通过 `header:` 传入 —— '
-              '保证它始终在队列上方且与队列同一个滚动体');
+      expect(qbody.contains('SliverPersistentHeader'), isTrue,
+          reason: '★ 吸顶区必须在 `_QueueTab` 里（那是执行顺序页）');
+      expect(qbody.contains('_sortActions(context, c)'), isTrue,
+          reason: '★ 快捷排序 + 全局开关必须住进吸顶区 —— '
+              '它们就是用户说的"上边的按钮和展示"');
+    });
+
+    test('吸顶区高度**实测**, 不写死（字号缩放 / Wrap 折行都不裁按钮）', () {
+      final view = codeOnly('lib/views/tasks/task_list_view.dart');
+      expect(view.contains('class _StickyQueueHeader'), isTrue,
+          reason: '★ 缺 `SliverPersistentHeaderDelegate` 实现');
+      final i = view.indexOf('class _StickyQueueHeader');
+      final body = view.substring(i, (i + 3000).clamp(0, view.length));
+      expect(body.contains('LayoutBuilder'), isTrue,
+          reason: '★ 高度必须**实测**（`LayoutBuilder`）—— '
+              '写死会在系统字号变大 / 窄屏 `Wrap` 折行时**裁掉按钮**');
+      expect(body.contains('minExtent') && body.contains('maxExtent'), isTrue,
+          reason: '★ delegate 必须给出 min/maxExtent');
     });
   });
 }

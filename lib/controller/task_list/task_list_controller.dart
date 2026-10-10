@@ -359,8 +359,12 @@ class TaskListController extends GetxController with LogMixin {
           ? <String>[]
           : ((mq as Map)['tasks'] as List).map((e) => '$e').toList();
 
-      // ★ 偏好要在**第一次过滤之前**载入 —— 否则首帧会用默认排序,
-      //   然后第二帧跳到用户的排序, 看起来像"界面闪了一下"。
+      // ★★ 偏好要在**第一次过滤之前**载入 ★★
+      //
+      // ★ #9: 配置页列表也必须**先**拿到 —— 因为偏好的隔离键是
+      //   `<账号>:<页id>`（用户裁定 2A: 三项前端偏好按页隔离）。
+      //   顺序反了会读到"账号级"的旧 key, 看起来像"偏好丢了"。
+      await loadQueueProfiles();
       _loadPrefs();
       // ★ 把载入的搜索词**同步回输入框** —— 否则重启后
       //   `query` 有值但输入框是空的（状态与显示不一致）。
@@ -531,6 +535,120 @@ class TaskListController extends GetxController with LogMixin {
     _applySort();
   }
 
+  // ---------------------------------------------------------------- 配置页（#9）
+  //
+  // 用户原话:
+  // > "添加**执行顺序配置页 1/2/3/……**，可以添加、删除和切换配置页"
+  //
+  // ★ 一页 = **整页快照**（用户裁定「1甲」= 全都算）:
+  //   队列 + 每任务调度（启停/次数/优先级/预期耗时）+ **全局开关**。
+  // ★ 所以「切换 / 删除」之后必须 `reload()` —— 队列**和**全局开关都变了,
+  //   只刷新队列会让界面显示旧的总开关（那就成了"改了不生效"）。
+
+  /// 配置页列表（`[{id,name,count,active}]`）。空列表 = 后端没给 / 还没加载。
+  List<Map<String, dynamic>> queueProfiles = [];
+
+  /// 当前页 id（'' = 未知）。
+  ///
+  /// ★ 它同时是 `TaskPrefsStore` 的**隔离键**的一部分（见 `_prefsKey`）:
+  ///   每页各有自己的排序列/筛选/分栏宽度（用户裁定「2A」= 算）。
+  String queueProfileId = '';
+
+  /// 当前页名字（找不到时回退成 id）。
+  String get queueProfileName {
+    final cur = queueProfiles.firstWhere(
+      (p) => '${p['id']}' == queueProfileId,
+      orElse: () => const {},
+    );
+    final n = '${cur['name'] ?? ''}';
+    return n.isEmpty ? (queueProfileId.isEmpty ? '1' : queueProfileId) : n;
+  }
+
+  /// 加载配置页列表。
+  ///
+  /// ★ **失败不抛**: 后端旧版本没有这组端点时返回 404, 那时界面
+  ///   只显示当前页, 不该让整个任务列表打不开。
+  Future<void> loadQueueProfiles() async {
+    try {
+      final res = await _api.getQueueProfiles(scriptName);
+      final err = '${res['error'] ?? ''}';
+      if (err.isNotEmpty) {
+        printError(info: '配置页读取失败: $err');
+        return;
+      }
+      final list = (res['profiles'] as List?) ?? const [];
+      queueProfiles = list
+          .whereType<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList();
+      queueProfileId = '${res['active_id'] ?? ''}';
+      if (queueProfileId.isEmpty && queueProfiles.isNotEmpty) {
+        queueProfileId = '${queueProfiles.first['id'] ?? ''}';
+      }
+    } catch (e) {
+      printError(info: '配置页读取异常: $e');
+    }
+  }
+
+  /// 新建一页（后端把**当前**队列存为新页并切过去）。
+  ///
+  /// :return 给用户看的**中文提示**（后端 `message`, 界面直接上屏）
+  Future<String> createQueueProfile({String? name}) async {
+    final res = await _api.createQueueProfile(scriptName, name: name);
+    if (res['ok'] == true) {
+      await loadQueueProfiles();
+      await reload();
+      return '${res['message'] ?? '已新建配置页'}';
+    }
+    return '新建失败: ${res['error'] ?? '未知错误'}';
+  }
+
+  /// 切换到某一页。
+  ///
+  /// ★ 后端在同一个请求里先存当前页再载目标页（原子）, 前端只管刷新。
+  Future<String> activateQueueProfile(String id) async {
+    final res = await _api.activateQueueProfile(scriptName, id);
+    if (res['ok'] == true) {
+      // ★ 切页 -> **换偏好的隔离 key**（先把旧页三项存回, 再载新页的）
+      _switchPrefsPage(id);
+      await loadQueueProfiles();
+      await reload();
+      return '${res['message'] ?? '已切换配置页'}';
+    }
+    return '切换失败: ${res['error'] ?? '未知错误'}';
+  }
+
+  /// 给配置页改名（**只改名字**, 不动页内容）。
+  Future<String> renameQueueProfile(String id, String name) async {
+    final res = await _api.renameQueueProfile(scriptName, id, name);
+    if (res['ok'] == true) {
+      await loadQueueProfiles();
+      update();
+      return '${res['message'] ?? '已改名'}';
+    }
+    return '改名失败: ${res['error'] ?? '未知错误'}';
+  }
+
+  /// 删除一页（后端保证至少留一页）。
+  ///
+  /// ★ 删掉的如果是**当前页**, 后端会把 active 换成剩下第一页 ——
+  ///   那时偏好 key 也要跟着走, 否则会显示"已删那页"的排序（看起来像串页）。
+  Future<String> deleteQueueProfile(String id) async {
+    final res = await _api.deleteQueueProfile(scriptName, id);
+    if (res['ok'] == true) {
+      final wasActive = id.trim() == queueProfileId.trim();
+      await loadQueueProfiles();
+      if (wasActive && queueProfileId.trim() != id.trim()) {
+        // 只换 key（旧页已被删, 没必要再存回去）
+        _prefsLoaded = false;
+        _applyFilter();
+      }
+      await reload();
+      return '${res['message'] ?? '已删除配置页'}';
+    }
+    return '删除失败: ${res['error'] ?? '未知错误'}';
+  }
+
   /// 排序 + 过滤的入口（`_applyFilter` 之后调）。
   void _applySort() {
     tasks = TaskSorter.apply(
@@ -541,12 +659,29 @@ class TaskListController extends GetxController with LogMixin {
   }
 
   // ---------------------------------------------------------------- 偏好持久化
+  //
+  // ★★★ 按**配置页**隔离（用户裁定「2A」）★★★
+  //
+  // 用户原话:
+  // > "添加**执行顺序配置页 1/2/3/……**，可以添加、删除和切换配置页"
+  // > "2：**算**（排序列/升降序 · 只看筛选 · 分栏宽度, 按页隔离）"
+  //
+  // 所以偏好 key 是 `<账号>:<页id>`（不是只按账号）——
+  // 「日常」页按累计次数排序、「周末」页按下次运行排序, 互不干扰。
+  //
+  // ⚠ 兼容: 页 id 未知（后端旧版 / 还没加载完）时**退回只按账号** ——
+  //   否则会读到一个永远空的 key, 用户的偏好看起来"丢了"。
+  String get _prefsKey {
+    final pid = queueProfileId.trim();
+    return pid.isEmpty ? scriptName : '$scriptName:$pid';
+  }
+
   /// 从磁盘读偏好（**只读一次** —— 之后以内存为准，避免把用户刚改的打回去）。
   void _loadPrefs() {
     if (_prefsLoaded) return;
     _prefsLoaded = true;
     try {
-      final p = prefsStore.read(scriptName);
+      final p = prefsStore.read(_prefsKey);
       final spec = TaskSortSpec.fromJson(p['sort']);
       if (spec != null && TaskSorter.isKnownColumn(spec.column)) {
         sortSpec = spec;
@@ -563,7 +698,7 @@ class TaskListController extends GetxController with LogMixin {
 
   void _savePrefs() {
     try {
-      prefsStore.write(scriptName, {
+      prefsStore.write(_prefsKey, {
         'sort': sortSpec.toJson(),
         'onlyEnabled': onlyEnabled,
         'onlyFixed': onlyFixed,
@@ -574,6 +709,27 @@ class TaskListController extends GetxController with LogMixin {
     } catch (e) {
       printError(info: '偏好保存失败: $e');
     }
+  }
+
+  /// 切页时**换偏好 key**: 先把当前三项存回 `<账号>:<当前页id>`,
+  /// 再从 `<账号>:<目标页id>` 载入。
+  ///
+  /// ★ 调用方必须在 `activateQueueProfile()` **之前**调它 ——
+  ///   那时 `queueProfileId` 还是**旧页**, 正好用来存旧页的偏好;
+  ///   载新页要等后端返回新 id 之后（`reload()` 里 `_loadPrefs()`）。
+  ///
+  /// ⚠ 为什么不能只改 key 不搬数据: `_loadPrefs` 有 `_prefsLoaded` 重入闸
+  ///   （只读一次盘）—— 不把它清掉, 切页后界面**还是旧页的排序**,
+  ///   看起来"切页没反应"。
+  void _switchPrefsPage(String nextProfileId) {
+    final next = nextProfileId.trim();
+    if (next.isEmpty || next == queueProfileId.trim()) return;
+    _savePrefs();          // ★ ① 旧页的偏好落盘（key 里的 id 还是旧页）
+    queueProfileId = next; // ★ ② 换 key
+    _prefsLoaded = false;  // ★ ③ 允许再读一次盘（新页的）
+    _loadPrefs();          // ★ ④ 载新页的偏好
+    _applyFilter();
+    update();
   }
 
   /// 切换排序列（点表头）。同一列再点 = 切换升降序。
@@ -602,7 +758,8 @@ class TaskListController extends GetxController with LogMixin {
       '确定继续吗？',
     );
     if (!ok) return false;
-    prefsStore.clear(scriptName);
+    // ★ #9: 清的是**当前页**的偏好（`<账号>:<页id>`）—— 别的页不受影响
+    prefsStore.clear(_prefsKey);
     sortSpec = TaskSorter.defaultSpec;
     onlyEnabled = false;
     onlyFixed = false;
