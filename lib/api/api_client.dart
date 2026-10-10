@@ -278,6 +278,60 @@ class ApiClient {
     return res.data ?? {};
   }
 
+  // ---------------------------------------------------------------- 窗口 CRUD（S4）
+  //
+  // 设计: `docs/scheduler-architecture.md` §5.1。
+  // ★ **按 `id`** 定位（"身份不是位置"）—— 按下标在重排后会删错。
+
+  /// 查某任务的**窗口列表**。
+  Future<List<Map<String, dynamic>>> getTaskWindows(
+      String scriptName, String task) async {
+    final res =
+        await request(() => get('/$scriptName/tasks/$task/windows'));
+    final d = res.data ?? {};
+    return ((d['windows'] as List?) ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+  }
+
+  /// **整单替换**窗口列表（前端编辑器一次保存全部）。
+  Future<Map<String, dynamic>> putTaskWindows(
+      String scriptName, String task, List<Map<String, dynamic>> windows) async {
+    final res = await request(() => put(
+          '/$scriptName/tasks/$task/windows',
+          data: windows,
+        ));
+    return res.data ?? {};
+  }
+
+  /// **新增**一条窗口（后端生成 `id`）。
+  Future<Map<String, dynamic>> addTaskWindow(
+      String scriptName, String task, Map<String, dynamic> window) async {
+    final res = await request(() => post(
+          '/$scriptName/tasks/$task/windows',
+          data: window,
+        ));
+    return res.data ?? {};
+  }
+
+  /// **改**一条窗口（**按 `id`**）。
+  Future<Map<String, dynamic>> updateTaskWindow(String scriptName, String task,
+      String windowId, Map<String, dynamic> window) async {
+    final res = await request(() => put(
+          '/$scriptName/tasks/$task/windows/$windowId',
+          data: window,
+        ));
+    return res.data ?? {};
+  }
+
+  /// **删**一条窗口（**按 `id`**）。
+  Future<Map<String, dynamic>> deleteTaskWindow(
+      String scriptName, String task, String windowId) async {
+    final res = await request(
+        () => delete('/$scriptName/tasks/$task/windows/$windowId'));
+    return res.data ?? {};
+  }
+
   Future<bool> putScriptArg(
     String scriptName,
     String taskName,
@@ -347,6 +401,18 @@ class ApiClient {
             if (entryId != null && entryId.isNotEmpty) 'entry_id': entryId,
           },
         ));
+    return res.data ?? {};
+  }
+
+  /// **一键清空执行队列**（⑦）。
+  ///
+  /// 后端会 ① `run_list` 置空 ② 把所有 `auto_queue` 任务 `enable=false`
+  /// —— 后者是必须的, 否则它们会被 `build_queue()` **重新补回队列**
+  /// （与单个移除的语义一致: 定时任务"移出"要落地为停用）。
+  ///
+  /// ★ **不删任何任务配置**, 用户随时可以重新启用 + 【添加任务】加回来。
+  Future<Map<String, dynamic>> clearQueue(String scriptName) async {
+    final res = await request(() => post('/$scriptName/queue/clear'));
     return res.data ?? {};
   }
 
@@ -524,6 +590,35 @@ class ApiClient {
   /// 读运行列表。
   Future<Map<String, dynamic>> getRunList(String scriptName) async {
     final res = await request(() => get('/$scriptName/run_list'));
+    return res.data ?? {};
+  }
+
+  /// ★ **一次性排序执行顺序**（`PUT /{script}/queue/sort`）。
+  ///
+  /// `by` ∈ `'timed'` / `'fixed'`:
+  ///   * `timed` -> **定时段**排前面
+  ///   * `fixed` -> **固定段**排前面
+  ///
+  /// ## ★★★ 它是**动作**, 不是**状态** ★★★
+  ///
+  /// 旧的 `putPriorityMode` 设的是一个**持久模式**（`priority_mode`）:
+  /// 一旦设定, 每次 `build_queue()` 都按它排, 而且**限制拖动范围**
+  /// （不能跨类别拖）。
+  ///
+  /// ★ 用户裁定那太蠢:
+  /// > "固定任务优先和定时任务优先以及**不能跨类别拖动太蠢了**。
+  /// >  我只需要保持**可以自由拖动/改变执行顺序**就行, 固定任务优先和
+  /// >  定时任务优先**直接作为一个快捷排序**就好。"
+  ///
+  /// ★ 所以: 点一次, 排一次, **不留状态**。排完之后用户可以随意再拖。
+  ///
+  /// :return 后端返回体（含 `ok` / `by` / `entries` / `error`）
+  Future<Map<String, dynamic>> sortQueue(
+      String scriptName, String by) async {
+    final res = await request(() => put(
+          '/$scriptName/queue/sort',
+          data: {'by': by},
+        ));
     return res.data ?? {};
   }
 

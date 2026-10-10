@@ -113,6 +113,56 @@ class _TaskListViewState extends State<TaskListView> {
 
   static const _splitKey = 'split_left_width';
 
+  /// ★★ ① 任务汇报**抽屉**是否展开（用户要求）★★
+  ///
+  /// 用户原话: "取消单独的 tab 和右半窗口, 改为**可以收纳的形式**,
+  ///           就是**点一下从右边滑出来, 再点一下收进去**。"
+  ///
+  /// 所以「任务汇报」**不再是 tab**, 也不再常驻 —— 由这个开关控制右侧滑出的
+  /// 面板（**全局生效**: 宽屏在右栏位置、窄屏在底部位置）。
+  bool _reportOpen = false;
+
+  /// 抽屉宽度（宽屏用）。`final` 就好 —— 目前不提供拖拽调整宽度。
+  final double _reportWidth = 380;
+
+  /// ★★ ① **任务汇报抽屉** ★★
+  ///
+  /// 只在 `_reportOpen` 为真时渲染（见 `build` 里的宽屏/窄屏两处），
+  /// 带一个短促的**滑入动画**。
+  Widget _reportDrawer(BuildContext context, TaskListController c) {
+    return TweenAnimationBuilder<double>(
+      // 展开时从 0 -> 1 播一次。收起是**直接移除**（不做反向动画）,
+      // 免得和 `Stack` 的布局抢帧。
+      key: const ValueKey('report-drawer'),
+      tween: Tween(begin: 0.0, end: 1.0),
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      builder: (_, t, child) => Opacity(
+        opacity: t.clamp(0.0, 1.0),
+        child: child,
+      ),
+      child: SizedBox(
+        width: _reportWidth,
+        child: TaskReportPanel(controller: c),
+      ),
+    );
+  }
+
+  /// 顶部工具条的「简报」按钮 —— 切换抽屉（用户要求"再点一下收进去"）。
+  Widget _reportToggle(BuildContext context) {
+    return Tooltip(
+      message: '任务完成汇报 —— 点一下从右边滑出来, 再点一下收进去。\n'
+          '只报**完成了哪些 / 哪些出错**；原始日志在「日志」按钮里。',
+      child: TextButton.icon(
+        icon: Icon(
+            _reportOpen ? Icons.chevron_right : Icons.assessment_outlined,
+            size: 16),
+        label: Text(_reportOpen ? '收起简报' : '简报'),
+        onPressed: () => setState(() => _reportOpen = !_reportOpen),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -225,12 +275,16 @@ class _TaskListViewState extends State<TaskListView> {
 
     return GetBuilder<TaskListController>(
       tag: tag,
-      // ★ 三个 tab —— 「调度」·「执行队列」·「任务汇报」。
+      // ★ **两个** tab —— 「调度」·「执行队列」。
+      //
+      //   ★ ①: 「任务汇报」**不再是 tab** —— 用户原话:
+      //     "取消单独的 tab 和右半窗口, 改为可以收纳的形式"
+      //     它现在是右侧**可收纳抽屉**（`_reportOpen` + `_reportDrawer`）。
       //
       //   ⚠ `length` **必须**与下面 `TabBar` 的 tab 数一致,
       //     不匹配会**运行时崩**（我踩过一次: 改了 TabBar 忘了改 length）。
       builder: (_) => DefaultTabController(
-        length: 3,
+        length: 2,
         child: Column(
           children: [
             // ★ 这里**不要**用 `Obx` 包 `RunControlBar` ——
@@ -254,7 +308,9 @@ class _TaskListViewState extends State<TaskListView> {
                 //   * **任务汇报** —— 完成了哪些 / 哪些出错（原日志位）
                 Tab(text: '调度'),
                 Tab(text: '执行队列'),
-                Tab(text: '任务汇报'),
+                // ★ ①: 「任务汇报」已从 tab 移除 -> 改为右侧**可收纳抽屉**
+                //   用户原话: "取消单独的 tab 和右半窗口, 改为可以收纳的形式"
+                //   开关在顶部工具条的「简报」按钮（全局生效）。
               ],
             ),
             Expanded(
@@ -268,35 +324,112 @@ class _TaskListViewState extends State<TaskListView> {
                   //   （用户说过"看不到就以为功能没了", 这点必须防住。）
                   ? LayoutBuilder(
                       builder: (_, box) {
-                        final maxLeft =
-                            (box.maxWidth - 320).clamp(420.0, box.maxWidth);
-                        final left = _splitWidth.clamp(420.0, maxLeft);
+                        // ★★ T9（审计修复）: clamp 必须**扣掉抽屉宽度** ★★
+                        //
+                        // ## 原来的 bug（超宽 61px -> RenderFlex 溢出）
+                        //
+                        // 原来写死"右侧留 320":
+                        //     maxLeft = box.maxWidth - 320
+                        // 但右栏已从"常驻汇报"改成 **380 宽的抽屉**
+                        // （`_reportWidth = 380`）。于是当 `left` 触顶
+                        // （`maxLeft`）且抽屉打开时:
+                        //     总宽 = left + 1(VerticalDivider) + 380
+                        //          = (maxWidth - 320) + 1 + 380
+                        //          = maxWidth + **61**   -> **溢出**
+                        //
+                        // ★ 触发条件不是"罕见": 拖动条的上限**允许**拖到该区间,
+                        //   而且**换了更窄的窗口**后, 之前存的偏好值就会触顶。
+                        //
+                        // ## 修法
+                        //
+                        // 把"右侧要留多少"做成**跟随抽屉开合**的变量:
+                        //   * 抽屉开 -> 留 `380 + 1`（抽屉 + 分隔线）
+                        //   * 抽屉关 -> 留 320（原来那个"别把自己拖没"的下限）
+                        //
+                        // ★ 同时给 `maxLeft` 加**下界保护**（`>= 420`）——
+                        //   窄窗口下 `maxWidth - 380` 可能小于 420, 那样
+                        //   `clamp(420, maxLeft)` 会因为 `lower > upper` 而**抛异常**。
+                        const double minLeft = 420;
+                        // ★★ 用户报的 bug（抽屉收起后右侧大片空白）★★
+                        //
+                        // ## 原来的错误
+                        //
+                        // 我原来写 `_reportOpen ? _reportWidth + 1 : 320.0`
+                        // —— 抽屉**关着**时仍按 320 预留。但 `Row` 里
+                        // **只有左栏**（抽屉没渲染, 见下面 `if (_reportOpen)`）
+                        // -> `left` 被限在 `maxWidth - 320` -> **右边空出
+                        // 一大片**（最多 320px）。
+                        //
+                        // ★ 用户原话: "任务汇报收起后页面右侧留有大片空白。
+                        //   应该在收起时主页面填充页面。"
+                        //
+                        // ## 修法
+                        //
+                        // * **抽屉关** -> 左栏**占满**（`reserved = 0`,
+                        //   于是 `maxLeft == maxWidth`, 由下面的
+                        //   `Expanded` 兜住剩余空间）
+                        // * **抽屉开** -> 留 `380 + 1`（抽屉 + 分隔线）
+                        //
+                        // ★ 拖动条只在抽屉打开时渲染, 所以关着时不需要
+                        //   "留出可拖的范围"。
+                        final double reserved =
+                            _reportOpen ? _reportWidth + 1 : 0.0;
+                        final double maxLeft = (box.maxWidth - reserved)
+                            .clamp(minLeft, box.maxWidth);
+                        final double left =
+                            _splitWidth.clamp(minLeft, maxLeft);
                         return Stack(
                           children: [
                             Positioned.fill(
                               child: Row(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
-                                  SizedBox(
-                                    width: left,
-                                    child: TabBarView(
-                                      children: [
-                                        _ScheduleTab(
-                                            c: c, searchCtrl: _searchCtrl),
-                                        _QueueTab(c: c),
-                                        TaskReportPanel(controller: c),
-                                      ],
+                                  // ★★ 抽屉**关** -> 主区域**占满** ★★
+                                  //
+                                  // 用户原话: "任务汇报收起后页面右侧留有大片
+                                  //   空白。应该在收起时主页面填充页面。"
+                                  //
+                                  // ⚠ 不能写成 `SizedBox(width: _reportOpen ? left : null)`
+                                  //   —— 在 `Row` 里 `width: null` 会让子项按
+                                  //   **固有宽度**排, 内容会塌成窄条。
+                                  //   **必须**用 `Expanded` 才真的"占满"。
+                                  if (_reportOpen) ...[
+                                    SizedBox(
+                                      width: left,
+                                      child: TabBarView(
+                                        children: [
+                                          _ScheduleTab(
+                                              c: c, searchCtrl: _searchCtrl),
+                                          _QueueTab(c: c),
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                  const VerticalDivider(width: 1),
-                                  // ★ 右侧 = 任务完成汇报（原日志位）
-                                  Expanded(
-                                      child: TaskReportPanel(controller: c)),
+                                    // ★★ ①: 右半栏不再是常驻汇报 —— 改为**按需滑出的抽屉** ★★
+                                    //   用户原话: "取消单独的 tab 和右半窗口,
+                                    //             改为可以收纳的形式（点一下从右边滑出来）"
+                                    //   开关在顶部工具条的「简报」按钮。
+                                    const VerticalDivider(width: 1),
+                                    _reportDrawer(context, c),
+                                  ] else
+                                    Expanded(
+                                      child: TabBarView(
+                                        children: [
+                                          _ScheduleTab(
+                                              c: c, searchCtrl: _searchCtrl),
+                                          _QueueTab(c: c),
+                                        ],
+                                      ),
+                                    ),
                                 ],
                               ),
                             ),
                             // 拖拽条 —— 压在分界线上（左右各 3px 热区, 好点中）
-                            Positioned(
+                            //
+                            // ★ T9: **只在抽屉打开时**渲染。抽屉关着时右侧
+                            //   没有面板, 这根条**没有任何东西可分**, 拖它
+                            //   只会让人困惑（审计指出"无意义可拖"）。
+                            if (_reportOpen)
+                              Positioned(
                               left: left - 3,
                               top: 0,
                               bottom: 0,
@@ -307,8 +440,10 @@ class _TaskListViewState extends State<TaskListView> {
                                   behavior: HitTestBehavior.translucent,
                                   onHorizontalDragUpdate: (d) {
                                     setState(() {
+                                      // ★ T9: 与上面的 `left` 用**同一个** clamp
+                                      //   （`minLeft` / `maxLeft` 已扣掉抽屉宽）
                                       _splitWidth = (_splitWidth + d.delta.dx)
-                                          .clamp(420.0, maxLeft);
+                                          .clamp(minLeft, maxLeft);
                                     });
                                   },
                                   // 松手才存盘 —— 拖动过程中不要每帧写存储
@@ -329,16 +464,19 @@ class _TaskListViewState extends State<TaskListView> {
                             children: [
                               _ScheduleTab(c: c, searchCtrl: _searchCtrl),
                               _QueueTab(c: c),
-                              TaskReportPanel(controller: c),
+                              // ★ ①: 第 3 个 tab（任务汇报）已删 -> 改为右侧抽屉
                             ],
                           ),
                         ),
-                        // ★ #6: 底部原来是**原始日志**, 现在换成**任务完成汇报**
-                        //   （用户: "当前日志位置替换为任务完成汇报的 tab"）。
-                        //   原始日志已移到「运行日志」单独界面（见 `_logsButton`）。
-                        SizedBox(
-                            height: 220,
-                            child: TaskReportPanel(controller: c)),
+                        // ★★ ①: 底部不再是常驻汇报 —— 改为**可收纳抽屉** ★★
+                        //   用户原话: "取消单独的 tab 和右半窗口, 改为可以收纳的形式,
+                        //             就是点一下从右边滑出来, 再点一下收进去"
+                        if (_reportOpen) ...[
+                          const Divider(height: 1),
+                          SizedBox(
+                              height: 260,
+                              child: _reportDrawer(context, c)),
+                        ],
                       ],
                     ),
             ),
@@ -391,6 +529,10 @@ class _TaskListViewState extends State<TaskListView> {
             onPressed: () => _showRunLogs(context, c),
             icon: const Icon(Icons.article_outlined, size: 18),
           ),
+          // ★★ ① **任务汇报抽屉**的开关（用户要求"点一下滑出来, 再点一下收进去"）★★
+          //
+          //   「任务汇报」已不再是 tab、也不再常驻右栏 —— 只由这个按钮控制。
+          _reportToggle(context),
           // ★ 本地时钟(每秒刷新), 不再用后端取数时刻的时间戳
           Text(
             '${_two(_now.hour)}:${_two(_now.minute)}:${_two(_now.second)}',
@@ -489,9 +631,11 @@ class _TaskListViewState extends State<TaskListView> {
 mixin _GlobalPanelMixin {
   TaskListController get c;
 
-  /// 全局设置 —— 两个总开关 / 定时优先 / 休息穿插 / 队列跑空 / 优先级依据。
+  /// 全局设置 —— 两个总开关 / **调度优先级** / 休息穿插 / 队列跑空。
+  ///
+  /// ★ T1: 原来的「优先级依据」(`schedule_rule`) 下拉**已删除** ——
+  ///   它与「调度优先级」(`priority_mode`) 语义重叠, 是"拖了没用"的根源。
   Widget _globalPanel(BuildContext context) {
-    final modes = c.modes;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -526,33 +670,67 @@ mixin _GlobalPanelMixin {
               onChanged: c.toggleEnableTimed,
             ),
             const SizedBox(height: 4),
-            // 定时任务到点时怎么跟固定任务抢
+            // ★★★ S7: **「调度优先级」下拉已删除, 改成两个排序按钮** ★★★
+            //
+            // ## 用户原话
+            //
+            // > "我觉得……这个**固定任务优先和定时任务优先以及不能跨类别
+            // >  拖动太蠢了**。我只需要保持**可以自由拖动/改变执行顺序**就行,
+            // >  固定任务优先和定时任务优先**直接作为一个快捷排序**就好,
+            // >  而不是定义一些没有意义的不能跨类别拖动以及**单独的调度优先级**。"
+            //
+            // ## 为什么改成按钮
+            //
+            // 旧设计是一个**状态**（`priority_mode`）: 一旦设定, 每次
+            // `build_queue()` 都按它排, 而且**限制拖动范围**。
+            // ★ 新设计是**一个动作**: 点一下, 排一次, **不留状态**。
+            //   排完之后队列就是新顺序, 用户**可以随意再拖**（跨类别也行）。
+            //
+            // ★ 所以这里把"下拉（选一个模式）"换成"两个按钮（做一次排序）"。
+            //   ★ 界面语言也随之改变: 不再说"当前是什么模式", 而是
+            //     "按什么排一下"。
             Row(
               children: [
-                SizedBox(
+                const SizedBox(
                   width: 168,
-                  child: Text(c.globalFieldLabel('timed_priority', '定时任务优先级')),
+                  child: Text('快捷排序'),
                 ),
-                DropdownButton<String>(
-                  value: c.timedPriorityChoices
-                          .any((e) => '${e['value']}' == c.timedPriority)
-                      ? c.timedPriority
-                      : (c.timedPriorityChoices.isNotEmpty
-                          ? '${c.timedPriorityChoices.first['value']}'
-                          : null),
-                  isDense: true,
-                  items: [
-                    for (final e in c.timedPriorityChoices)
-                      DropdownMenuItem<String>(
-                        value: '${e['value']}',
-                        child: Text('${e['label']}'),
-                      ),
-                  ],
-                  onChanged: (v) {
-                    if (v != null) c.setTimedPriority(v);
-                  },
+                OutlinedButton.icon(
+                  onPressed: c.sortingQueue
+                      ? null
+                      : () => c.sortQueueBy('timed'),
+                  icon: const Icon(Icons.schedule, size: 16),
+                  label: const Text('定时排前面'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: c.sortingQueue
+                      ? null
+                      : () => c.sortQueueBy('fixed'),
+                  icon: const Icon(Icons.push_pin, size: 16),
+                  label: const Text('固定排前面'),
+                ),
+                const SizedBox(width: 8),
+                // ★ 说清"拖动永远自由" —— 这正是用户抱怨的点
+                const Tooltip(
+                  message: '执行顺序**完全按你拖的顺序**跑 ——\n'
+                      '所有条目都能互相拖动（不限类别）。\n'
+                      '上面两个按钮只是**帮你排一次**, 不会限制你之后怎么拖。',
+                  child: Chip(
+                    label: Text('可自由拖动'),
+                    visualDensity: VisualDensity.compact,
+                  ),
                 ),
               ],
+            ),
+            const Padding(
+              padding: EdgeInsets.only(left: 168, top: 2),
+              child: Text(
+                '★ 这两个按钮只是**排一次序**（定时/固定谁在前面）。'
+                '排完之后你仍然可以**任意拖动**，不限类别。\n'
+                '唯一固定的是「休息」条目 —— 它总是排在最后。',
+                style: TextStyle(fontSize: 11, color: Colors.black54),
+              ),
             ),
             _switchRow(
               context,
@@ -595,32 +773,26 @@ mixin _GlobalPanelMixin {
                       ),
                     ],
                   ),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('优先级依据'),
-                    const SizedBox(width: 8),
-                    DropdownButton<String>(
-                      value: c.scheduleRule,
-                      isDense: true,
-                      items: [
-                        for (final m in modes)
-                          DropdownMenuItem<String>(
-                            value: '${m['value']}',
-                            child: Text('${m['label']}'),
-                          ),
-                      ],
-                      onChanged: (v) {
-                        if (v != null) c.setScheduleRule(v);
-                      },
-                    ),
-                  ],
-                ),
-                if (c.scheduleRule != c.listModeValue)
-                  Chip(
-                    label: Text('⚠ 顺序要生效需选「${c.listModeLabel}」'),
-                    visualDensity: VisualDensity.compact,
-                  ),
+                // ★★ T1（审计修复）: **删掉「优先级依据」四选一下拉** ★★
+                //
+                // ## 为什么删
+                //
+                // 它是旧的 `schedule_rule`（`Filter`/`FIFO`/`Priority`/`List`）
+                // 控件, 与新的「调度优先级」(`priority_mode` 三模式)
+                // **语义重叠**——构成**两个互相牵制的控件**:
+                //   * 用户拖了顺序, 却因为 `schedule_rule != List` 而不生效
+                //     （台账 §27.3 那类"拖了没用"陷阱）
+                //   * 下面那句提示「⚠ 顺序要生效需选「列表优先」」正是在
+                //     向用户解释这个**本不该存在**的困惑
+                //
+                // 用户裁定: "**三个选项: 定时任务优先、固定任务优先、自定义**"
+                // —— 调度优先级只有**一个**开关。
+                //
+                // ★ 后端已同步: `update_scheduler()` 不再读 `schedule_rule`
+                //   （T1）, 两个分支已合并为"队列是唯一顺序权威"。
+                //
+                // ★ 我此前在注释里写了"那个下拉也一并移除"却**没有真的删**
+                //   —— 注释与代码不符（审计抓到）。现在真的删了。
               ],
             ),
           ],

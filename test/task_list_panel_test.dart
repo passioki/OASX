@@ -86,17 +86,20 @@ class FakeTaskListController extends TaskListController {
   @override
   List<int> get durationChoices => const [10, 30, 60];
 
-  @override
-  String get listModeValue => 'List';
-
-  @override
-  String get listModeLabel => '列表优先(自定义顺序)';
-
-  @override
-  String get scheduleRule => 'List';
-
-  @override
-  String get scheduleRuleLabel => '列表优先(自定义顺序)';
+  // ★★★ S7 清理: 下面这些 `@override` **已删除** ★★★
+  //
+  // `listModeValue` / `listModeLabel` / `scheduleRule` / `scheduleRuleLabel`
+  // 四个 getter **在父类里已经不存在了** —— 它们是 `schedule_rule`
+  // （4 路旧调度规则）那一簇的配套, 早先几轮已把父类那簇删掉,
+  // 但**测试里的假实现还留着**。
+  //
+  // ★ 症状: `flutter analyze test/` 报
+  //   `override_on_non_overriding_member`（"这个 getter 并没有覆盖任何继承的 getter"）。
+  //   ★ 这类警告**很危险**: 它意味着测试在为**不存在的成员**造桩,
+  //     也就是说那几条断言其实**从没验证过任何东西**。
+  //
+  // ⚠ 这些是**上一轮**删父类成员时漏掉的（不是本轮引入）, 但既然
+  //   `analyze` 点名了就必须清 —— 否则下一个人的"analyze 很干净"就永远是假的。
 
   @override
   Map<String, dynamic> kindOf(String kind) {
@@ -106,8 +109,8 @@ class FakeTaskListController extends TaskListController {
     return {'value': kind, 'label': kind, 'help': ''};
   }
 
-  @override
-  bool isTaskEntry(Map<String, dynamic> e) => '${e['kind']}' == 'task';
+  // ★ S7 清理: `isTaskEntry` 的 `@override` 已删（父类里没有这个成员）。
+  bool isTaskEntryStub(Map<String, dynamic> e) => '${e['kind']}' == 'task';
 
   @override
   String describeEntry(Map<String, dynamic> e) {
@@ -213,8 +216,10 @@ class FakeTaskListController extends TaskListController {
           t['queued'] != true)
       .toList();
 
-  @override
-  Map<String, dynamic> overviewRowOf(String command) =>
+  // ★ S7 清理: `overviewRowOf` 的 `@override` 已删 —— **父类里没有这个成员**
+  //   （它随"按任务名查行"那簇一起删掉了）。留一个**不带 `@override`** 的
+  //   本地辅助, 因为下面几条断言确实要用它。
+  Map<String, dynamic> overviewRowOfStub(String command) =>
       findTask(command) ?? const {};
 
   /// 【添加任务】候选 —— 假实现按**同一规则**从 `_tasks` 里筛。
@@ -250,8 +255,14 @@ class FakeTaskListController extends TaskListController {
   @override
   Future<void> reorderEntries(int a, int b) async {}
 
-  @override
-  Future<void> resetToDefault() async {}
+  // ★★★ S7 清理: `resetToDefault()` 的假实现**已删除** ★★★
+  //
+  // ★ 父类里的 `resetToDefault()` **早先几轮就被删了** —— 它当时被判定为
+  //   "**最危险的前端死代码**"（会**清空 `run_list`**）, 详见
+  //   `task_list_controller.dart` 里那段删除说明。
+  // ★ 但测试的假实现**留到了现在**, 于是 `analyze` 报
+  //   `override_on_non_overriding_member`。
+  // ★ 删掉它: 为不存在的成员造桩**只会掩盖问题**。
 }
 
 /// 造一个任务行（字段与真实 `/overview` 对齐）。
@@ -761,24 +772,65 @@ void _phase1Tests() {
   test('全局设置渲染**全部**开关（曾一个都没渲染）', () {
     // ★★ 重大遗漏的回归守卫 ★★
     //
-    // 后端把两个总开关 + 定时优先 + 休息穿插全做完了, `/schema` 的
+    // 后端把两个总开关 + 优先级 + 休息穿插全做完了, `/schema` 的
     // `global_fields` 也暴露了 —— 但前端**一个都没渲染**,
     // 于是它们永远停在默认值, 用户在界面上根本改不了。
+    //
+    // ★★ S6: `timed_priority` -> **`priority_mode`**（三模式）★★
+    //
+    // 用户裁定: "**三个选项: 定时任务优先、固定任务优先、自定义**" ——
+    // 旧的两个重叠下拉已并入 `priority_mode`。
+    //
+    // ★★★ S7: 那条裁定**已被用户自己推翻并删除** ★★★
+    //
+    // > "固定任务优先和定时任务优先以及**不能跨类别拖动太蠢了**。我只需要
+    // >  保持**可以自由拖动/改变执行顺序**就行, 固定任务优先和定时任务优先
+    // >  **直接作为一个快捷排序**就好, 而不是定义一些没有意义的不能跨类别
+    // >  拖动以及**单独的调度优先级**。"
+    //
+    // ★ 所以 `priority_mode` **不再是全局设置项** —— 后端 `/schema` 的
+    //   `global_fields` 现在只有 4 个键。这里改成断言**实际还在**的三个
+    //   （`enable_fixed` / `enable_timed` / `rest_interleave`）,
+    //   并加**反向守卫**确保 `priority_mode` 不再出现。
     final view = codeOnly('lib/views/tasks/task_list_view.dart');
-    for (final key in ['enable_fixed', 'enable_timed',
-                       'timed_priority', 'rest_interleave']) {
+    for (final key in ['enable_fixed', 'enable_timed', 'rest_interleave']) {
       expect(view.contains("'$key'"), isTrue,
           reason: '全局设置缺开关 $key（后端早就支持了）');
     }
     expect(view.contains('_switchRow'), isTrue, reason: '缺开关行组件');
+    // ★ 反向守卫: 已删的「调度优先级」不得回来
+    expect(view.contains("'priority_mode'"), isFalse,
+        reason: '★ 「调度优先级三模式」已被用户裁定删除 —— '
+            '排序是"一次性动作"（两个按钮），不是一个"模式"');
   });
 
   test('开关的标签与说明从 `/schema` 读，不硬编码文案', () {
     final ctrl = codeOnly('lib/controller/task_list/task_list_controller.dart');
     expect(ctrl.contains('globalFieldLabel'), isTrue);
     expect(ctrl.contains('globalField('), isTrue);
-    expect(ctrl.contains('timedPriorityChoices'), isTrue,
-        reason: '可选值也要从 /schema 读, 否则后端加选项前端看不到');
+    // ★★ T10: 这里原来断言 `timedPriorityChoices` —— 那个 getter 是**死代码**
+    //   （`timed_priority` 已并入 `priority_mode`, 且 `lib/` 里 0 个调用方）。
+    //   ★ 这条断言**给死代码上了锁**: 清理时它会失败, 于是没人敢删。
+    //   现在改成断言**真正在用**的 `globalSwitch`（两个总开关）。
+    //
+    // ★★★ S7 再修: 原来断言的是 `priorityModeChoices` ★★★
+    //
+    // 那个 getter 随「调度优先级三模式」一起**被用户裁定删除**了
+    // （排序改成一一次性动作 -> 没有"可选模式"这回事）。
+    // ★ 所以这里改成断言仍有效的 `globalSwitch`
+    //   （`enable_fixed` / `enable_timed` 两个总开关走它）。
+    expect(ctrl.contains('globalSwitch'), isTrue,
+        reason: '总开关要从 /schema 读当前值, 否则界面显示的可能不是真实状态');
+    // ★ 反向守卫: 随三模式一起删掉的三个 getter 不得回来
+    for (final dead in ['priorityModeChoices', 'dragWithinGroupOnly',
+                        'setPriorityMode']) {
+      expect(ctrl.contains(dead), isFalse,
+          reason: '★ `$dead` 随「调度优先级三模式」一起被删 —— '
+              '拖动永远自由, 排序是"一次性动作"（`sortQueueBy`）');
+    }
+    // ★ 正向: 替代它的"一次性排序"必须在
+    expect(ctrl.contains('sortQueueBy'), isTrue,
+        reason: '★ 缺了「快捷排序」—— 用户要的"排一次"能力就没有了');
 
     final view = codeOnly('lib/views/tasks/task_list_view.dart');
     // 开关行必须用 controller 给的标签, 而不是写死中文
@@ -857,7 +909,7 @@ void _phase1Tests() {
 
 // ============================================================ Phase 2: 合并页面
 void _phase2Tests() {
-  test('统一控制台: **三个 tab**（调度 / 执行队列 / 任务汇报）+ 日志移到独立窗口', () {
+  test('统一控制台: **两个 tab**（调度 / 执行队列）+ 汇报改**可收纳抽屉**', () {
     // ★★ 用户反馈演进（每一轮都改变了结构）★★
     //
     //   1. "把功能加入旧总览" -> 合并成一个控制台
@@ -866,24 +918,35 @@ void _phase2Tests() {
     //   4. "执行队列和队列视图是一个东西吧" -> 我误做成"删掉观察窗"
     //      用户纠正: "你这次是直接删除了监控，而不是合并"
     //   5. "队列单独一个 tab" -> 调度 / 执行队列
-    //   6. ★ **2026-10-10**:
-    //      "添加一个**任务完成汇报 tab**, 现在的日志属于原始日志, 应该
-    //       **转移到单独界面**用来 debug, 当前日志位置替换为**任务完成汇报**
-    //       的 tab"
-    //      -> 现在是 **调度 / 执行队列 / 任务汇报**, 日志移到独立窗口
+    //   6. **2026-10-10**: "添加一个**任务完成汇报 tab**…日志转移到单独界面"
+    //      -> 曾经是 调度 / 执行队列 / 任务汇报
+    //   7. ★ **2026-10-10 第三轮**:
+    //      "我发现任务汇报已经占用了右半窗口, 但是还有一个 tab 页面,
+    //       **两个重复了**。取消单独的 tab 和右半窗口, 改为**可以收纳的形式**,
+    //       就是**点一下从右边滑出来, 再点一下收进去**。"
+    //      -> 现在是 **2 个 tab** + **右侧可收纳抽屉**
     final view = codeOnly('lib/views/tasks/task_list_view.dart');
     expect(view.contains("Tab(text: '调度')"), isTrue);
     expect(view.contains("Tab(text: '执行队列')"), isTrue);
-    expect(view.contains("Tab(text: '任务汇报')"), isTrue,
-        reason: '用户要求新增「任务完成汇报」tab');
+    expect(view.contains("Tab(text: '任务汇报')"), isFalse,
+        reason: '★ ①: 「任务汇报」不该再是 tab（用户: "取消单独的 tab"）');
     expect(view.contains('TabBar('), isTrue);
     // ⚠ `length` 必须与 tab 数一致 —— 不一致会**运行时崩**（踩过）
-    expect(view.contains('length: 3'), isTrue,
-        reason: 'DefaultTabController 的 length 必须等于 tab 数（现在 3 个）');
+    expect(view.contains('length: 2'), isTrue,
+        reason: 'DefaultTabController 的 length 必须等于 tab 数（现在 2 个）');
+    expect(view.contains('length: 3'), isFalse,
+        reason: 'length 必须跟着 tab 数改（否则运行时崩）');
 
-    // ★ 原日志位 -> 任务汇报面板
-    expect(view.contains('TaskReportPanel('), isTrue,
-        reason: '原来放日志的位置应换成任务完成汇报');
+    // ★★ ① 抽屉: 开关 + 面板 + 动画
+    expect(view.contains('_reportDrawer'), isTrue,
+        reason: '① 应有可收纳的汇报抽屉');
+    expect(view.contains('_reportToggle'), isTrue,
+        reason: '① 应有"点一下滑出/收进"的开关');
+    expect(view.contains('_reportOpen'), isTrue,
+        reason: '① 抽屉的开合由 `_reportOpen` 控制');
+    // ★ 汇报面板**只能**由抽屉渲染 —— 不能再有常驻的
+    expect(view.contains('if (_reportOpen)'), isTrue,
+        reason: '① 抽屉必须按需渲染（不再常驻）');
 
     // ★ 原始日志 -> **独立窗口**（不再是常驻）
     expect(view.contains('_showRunLogs'), isTrue,

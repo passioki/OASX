@@ -120,10 +120,15 @@ class TaskListController extends GetxController with LogMixin {
   ///
   /// 状态来自 WebSocket 推送的 `state`（`ScriptService` 在 `wsListener`
   /// 里维护 `ScriptModel.state`）—— 所以这里只是**读**，不额外发请求。
-  bool get scriptRunning {
-    final m = Get.find<ScriptService>().findScriptModel(scriptName);
-    return m?.state.value == ScriptState.running;
-  }
+  /// ★★ T10（审计修复）: `scriptRunning` **已删除** ★★
+  ///
+  /// 它是**只读** getter, 但 `lib/` 内**无任何调用方**
+  /// （实测引用数 = 1, 就是它自己的定义）。
+  ///
+  /// ★ 需要"进程在不在跑"的地方都直接读
+  ///   `Get.find<ScriptService>().scriptModelMap[script]?.state.value`
+  ///   —— 例如 `run_control_bar.dart` 就是这么写的（它要同时看
+  ///   **进程**与**调度暂停**, 比这个单值 getter 更准）。
 
   /// 启动脚本。
   Future<bool> startScript() async {
@@ -164,9 +169,6 @@ class TaskListController extends GetxController with LogMixin {
   /// 队列跑空之后的行为。
   String whenQueueEmpty = 'goto_main';
 
-  /// 当前调度模式（初值只是占位，`refresh()` 会从 `/schema` 读真实值）。
-  String scheduleRule = 'Filter';
-
   /// 可选值（来自 `/schema` 的 `global_fields`，为空时用内置兜底）。
   List<Map<String, dynamic>> get queueEmptyChoices =>
       ((schemaGlobalFields['when_task_queue_empty']?['choices'] as List?) ??
@@ -183,17 +185,24 @@ class TaskListController extends GetxController with LogMixin {
 
   bool isQueueEmptyLoaded = false;
 
-  /// 调度模式是否已从后端读到（避免用硬编码默认值误报）。
-  bool isScheduleRuleLoaded = false;
-
   Map<String, dynamic> get schemaList =>
       (schema['list'] as Map?)?.cast<String, dynamic>() ?? {};
 
-  /// 调度模式列表（值 + 标签），**来自 `/schema`**。
-  List<Map<String, dynamic>> get modes =>
-      ((schemaList['modes'] as List?) ?? const [])
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList();
+  // ★★ 第二轮复审（待办 #5）: `modes` / `listModeValue` / `listModeLabel`
+  //   / `scheduleRule` / `scheduleRuleLabel` / `isScheduleRuleLoaded`
+  //   **整簇已删除** ★★
+  //
+  // 它们读的是 `/schema` 的 `list.modes` / `list.mode_value` /
+  // `list.current_mode` —— ★ 而那三个键**已从后端删除**
+  // （T1 删掉 `TaskScheduler.schedule()` 调用后, 那四个调度模式
+  // **不再影响排序**; S6 又并入 `priority_mode` 三模式）。
+  //
+  // ★ 危害: 这是"**已死的读写链**"—— 只差有人再调一次
+  //   `setScheduleRule()`（它会 `putScriptArg('schedule_rule', ...)`
+  //   **写配置**）就复活"两个排序权威"。
+  //
+  // ★ 现行做法: `priorityMode` / `priorityModeChoices` / `priorityModeLabel`
+  //   （读 `global_fields.priority_mode`, 见下面）—— **活的**。
 
   /// 条目类型定义（值 + 效果名 + 说明 + 三个标志），**来自 `/schema`**。
   ///
@@ -208,23 +217,6 @@ class TaskListController extends GetxController with LogMixin {
       ((schemaList['duration_choices'] as List?) ?? const [10, 30, 60])
           .map((e) => (e as num).toInt())
           .toList();
-
-  String get listModeValue => '${schemaList['mode_value'] ?? 'List'}';
-
-  String get listModeLabel {
-    for (final m in modes) {
-      if ('${m['value']}' == listModeValue) return '${m['label']}';
-    }
-    return listModeValue;
-  }
-
-  /// 当前调度模式的**中文名** —— 用户看到的要是名字, 不是 `Priority`。
-  String get scheduleRuleLabel {
-    for (final m in modes) {
-      if ('${m['value']}' == scheduleRule) return '${m['label']}';
-    }
-    return scheduleRule;
-  }
 
   /// 全部任务（不受过滤条件影响）。
   ///
@@ -265,7 +257,10 @@ class TaskListController extends GetxController with LogMixin {
     return '${k['label']} $dur';
   }
 
-  bool isTaskEntry(Map<String, dynamic> e) => '${e['kind']}' == 'task';
+  // ★★ T10（审计修复）: `isTaskEntry()` **已删除** ★★
+  //
+  // 它只是 `'${e['kind']}' == 'task'` 的一行包装, 而 `lib/` 内**无调用方**
+  // （实测引用数 = 1）。各处都直接写那个比较 —— 反而更清楚。
 
   /// 任务名(大驼峰) -> 中文名。
   String taskNameZh(String command) {
@@ -384,11 +379,9 @@ class TaskListController extends GetxController with LogMixin {
         }
         // 调度模式同理 —— 不能硬编码 'Filter', 否则会误报
         // "顺序不生效"(实际用户早设成 List 了)
-        final cm = '${schemaList['current_mode'] ?? ''}';
-        if (cm.isNotEmpty) {
-          scheduleRule = cm;
-          isScheduleRuleLoaded = true;
-        }
+        // ★ 待办 #5: 原来这里从 `/schema` 的 `list.current_mode` 读
+        //   "当前调度模式" —— 那个键**已从后端删除**
+        //   （模式改由 `global_fields.priority_mode` 表达）。
       }
 
       // 已编排 -> 顺序由 entries 决定; 未编排 -> 用后端给的默认顺序
@@ -631,8 +624,22 @@ class TaskListController extends GetxController with LogMixin {
   //   界面上要给二次确认弹窗（用户明确要求）。
 
   /// 某任务的运行记录（读不到给空）。
+  ///
+  /// ## ★★ 审计修复: 键必须**归一化** ★★
+  ///
+  /// 后端 `run_record` 的键是**小写、去下划线**（`module/config/run_record.py`
+  /// 的 `_norm()`）, 实测真实状态文件 `log/.run_record.json` 的键是
+  /// `demonencounter` / `realmraid` / `dailytrifles`。
+  ///
+  /// 而这里原来用**大驼峰 command**（`DemonEncounter`）直接查 -> **永远查不到**
+  /// -> 「运行记录」列恒显示「—」, 按累计次数/耗时排序**恒为 0**。
+  ///
+  /// ★ 归一化规则与后端**逐字一致**: `lower()` + 去掉 `_`。
+  static String _normKey(String s) => s.toLowerCase().replaceAll('_', '');
+
   Map<String, dynamic> recordOf(String command) {
-    final r = runRecord[command];
+    if (command.isEmpty) return const {};
+    final r = runRecord[command] ?? runRecord[_normKey(command)];
     return r is Map ? r.cast<String, dynamic>() : const {};
   }
 
@@ -1012,6 +1019,30 @@ class TaskListController extends GetxController with LogMixin {
       final eid = '${e['entry_id'] ?? ''}';
       out.add({
         ...e,
+        // ★★ S6: **段名**（前端算, 与后端 `TaskSpec.priority_group` 同一判据）★★
+        //
+        // ⚠ `/run_list` 端点**不返回** `group` —— 它是 `build_queue()` 的
+        //   **派生**结果（后端 `_segment_queue()` 刻意**不回写**配置）。
+        //   所以前端按**同一规则**自己算。
+        //
+        // ★★ 第二轮复审修复: **`rest` 必须打 `'__rest__'`, 不能走
+        //    `priorityGroupOf('')`** ★★
+        //
+        // 复审员实测: `priorityGroupOf('')` 会**直接返回 `'fixed'`**
+        // （它开头就有"空任务名 -> fixed"的兜底）—— 于是
+        // `_sameGroupReorder` 里那个 `g == '__rest__' -> rank 2` 的
+        // 分支**永远不可达**, `rest` 被当成 **fixed** 参与排序。
+        //
+        // 后果: 把「休息」往上拖时, 前端算出单调 rank -> **放行**;
+        // 而后端 `_check_drag_allowed` 明确要求"rest 必须在所有任务之后"
+        // -> **拒绝**。==> **前端放行、后端拒绝**（正是用户 ③ 的
+        // "拖了→界面动了→闪回 + 保存失败"）。
+        //
+        // ★ 修法: `rest`（`task` 为空）**显式**打 `'__rest__'`,
+        //   与后端 `_segment_queue()` 的 `'__rest__'` **同一个标记**。
+        'group': (('${e['task'] ?? ''}').isEmpty
+            ? '__rest__'
+            : priorityGroupOf('${e['task'] ?? ''}')),
         '_queuedRow': false,
         '_entryIndex': i,
         // ★ C-5: 带上条目身份, 供界面显示"加入时间"以区分同任务多条
@@ -1030,6 +1061,7 @@ class TaskListController extends GetxController with LogMixin {
       out.add({
         'kind': 'task',
         'task': cmd,
+        'group': priorityGroupOf(cmd),
         '_queuedRow': true,
         '_auto': true,
         '_entryId': '',
@@ -1037,6 +1069,57 @@ class TaskListController extends GetxController with LogMixin {
       });
     }
     return out;
+  }
+
+  /// ★★ S6 / 审计修复: 任务属于哪个**优先级段** —— `'timed'` / `'fixed'` ★★
+  ///
+  /// ## ★★ 为什么必须读后端的 `priority_group`（我第一版踩了坑）★★
+  ///
+  /// 第一版用 `/overview` 的 `category`（**声明**类别）自己推:
+  /// ```dart
+  /// c == 'timed' || c == 'limited' ? 'timed' : 'fixed'   // ✗ 错
+  /// ```
+  /// 但后端判段用的是 `category_effective`（⑥: `timed` + `period=none`
+  /// -> **`fixed`**）。实测: **54 个任务里 17 个**声明 `timed` 而最终是
+  /// `fixed`（DemonEncounter / GoldYoukai / Tako / Duel / …）。
+  ///
+  /// 后果: **分段条计数、类别色条、拖动范围全错**; 更糟的是"拖动预检"
+  /// 与后端 `_check_drag_allowed` 的判定**可能相反** —— 用户把 GoldYoukai
+  /// 拖到 RealmRaid 前, 前端认为"timed 在 fixed 前"放行, 后端算出逆序
+  /// -> 返回 `drag_blocked`, 用户只看到"不能跨类别拖动"却**看不出原因**。
+  ///
+  /// ★ 现在**优先读后端给的权威值**（`/overview` 的 `priority_group`,
+  ///   53/53 个任务都有）。兜底才自己推 —— 且兜底也**按最终类别**推,
+  ///   并配合 `period` 复现 ⑥ 的规则（`timed` + `period=none` -> `fixed`）。
+  String priorityGroupOf(String command) {
+    if (command.isEmpty) return 'fixed';
+    for (final t in queuedTasks) {
+      if ('${t['command']}' == command) return _groupOfRow(t);
+    }
+    // ★ 兜底: `queuedTasks` 里没有（该任务未启用 / 不在队列）就看全量表
+    for (final t in _allTasks) {
+      if ('${t['command']}' == command) return _groupOfRow(t);
+    }
+    return 'fixed';
+  }
+
+  /// 从一行任务数据里取段名 —— **先信后端, 再兜底复算**。
+  String _groupOfRow(Map<String, dynamic> t) {
+    final g = '${t['priority_group'] ?? ''}'.toLowerCase();
+    if (g == 'timed' || g == 'fixed') return g;
+
+    // ---- 兜底: 后端没给（旧版本后端）时自己推 ----
+    // ★ 必须是**最终类别**: 用 `category_effective`（后端已加）;
+    //   再不行才退回 `category`, 并按 ⑥ 的规则叠加 `period`。
+    final eff = '${t['category_effective'] ?? ''}'.toLowerCase();
+    if (eff == 'timed' || eff == 'limited') return 'timed';
+    if (eff == 'fixed' || eff == 'toppa') return 'fixed';
+
+    var c = '${t['category'] ?? ''}'.toLowerCase();
+    final p = '${t['period'] ?? ''}'.toLowerCase();
+    // ⑥: 声明为定时但周期"不限" -> 算固定
+    if (c == 'timed' && p == 'none') c = 'fixed';
+    return (c == 'timed' || c == 'limited') ? 'timed' : 'fixed';
   }
 
   /// ★ **任务完成汇报**（#6, 用户 2026-10-10 新需求）。
@@ -1113,8 +1196,31 @@ class TaskListController extends GetxController with LogMixin {
     if (oldIndex < 0 || oldIndex >= rows.length) return;
     if (newIndex > oldIndex) newIndex -= 1;
     if (newIndex < 0) newIndex = 0;
-    final item = rows.removeAt(oldIndex);
-    rows.insert(newIndex.clamp(0, rows.length), item);
+
+    // ★★ 实机验收修复: **先深拷贝, 再改** —— 不要变异派生表 ★★
+    //
+    // ## 原来的写法（`rows.removeAt` / `rows.insert`）
+    //
+    // `queuedTaskRows` 是**派生 getter**: 每次调用都 `entries` + 自动补齐
+    // **重建整表新 map**（见 `queuedTaskRows` 的实现）。原来的代码直接
+    // `removeAt` / `insert` 改那张派生表, 再把里面的 map **原样存回
+    // `entries`** —— 于是 `entries` 里存的是"派生 map"（带着
+    // `group` / `_queuedRow` / `_entryIndex` / `_addedAt` 等派生字段）。
+    //
+    // ★ 隐患: 派生表与 `entries` 之间**没有清晰边界**; 只要下一次
+    //   `queuedTaskRows` 的重建逻辑有一点偏差（例如某行被 `where` 滤掉、
+    //   或 `_entryIndex` 变了）, **下一次 build 就会用新派生表覆盖**,
+    //   视觉上就是"**松手后弹回原位**"。
+    //
+    // ★ 修法: 拷贝成**全新 map**（只含真正的条目字段）+ 重排 +
+    //   **只从副本重建 `entries`**。这样操作的**只可能是自己的一次性副本**,
+    //   不可能被下次派生覆盖。
+    final working = rows
+        .map((r) => Map<String, dynamic>.from(r))
+        .toList(growable: true);
+    final item = working.removeAt(oldIndex);
+    working.insert(newIndex.clamp(0, working.length), item);
+
     // 按新顺序重建 entries（只保留原本属于 entries 的项, 保持它们的新相对次序）
     //
     // ★★ 必须**保留 `entry_id`** ★★
@@ -1122,23 +1228,106 @@ class TaskListController extends GetxController with LogMixin {
     // 原来这里只写 `kind` / `task` / `minutes` —— **把 `entry_id` 抹掉了**。
     // 于是**每拖一次**后端就重新生成 id -> 按条目追踪（C）的完成状态
     // **全部失效**（同名多条还会互相覆盖）。实测抓到的严重 bug。
-    final entryRows = rows
-        .where((r) => r['_queuedRow'] != true)
+    // 按新顺序重建 `entries`。
+    //
+    // ★★★ 实机验收修复: **自动补齐的行也要写进去** ★★★
+    //
+    // ## 症状（用户原话）
+    //
+    // > "**现在只能拖动固定任务**。"
+    //
+    // ## 根因（实证）
+    //
+    // 用户的 `run_list` 只有 **4 条**, 而且**全是 FIXED**:
+    //     GoryouRealm / Sougenbi / Exploration / BondlingFairyland
+    // 队列里其它的（全部 TIMED）都是后端 `build_queue()` **自动补齐**的
+    // -> 它们的 `_queuedRow == true`。
+    //
+    // 而这里原来是:
+    // ```dart
+    // final entryRows = working
+    //     .where((r) => r['_queuedRow'] != true)   // ★ 把自动补齐的**丢掉**
+    //     ...
+    // ```
+    // -> 自动补齐的行**永远不写进 `run_list`** -> `_saveEntries()` 之后
+    //    `reload()` / 下次派生**又回到原位** -> **拖了必弹回**。
+    // ★ 用户体感就是"**只有固定任务能拖**"（因为只有它们在 `run_list` 里）。
+    //
+    // ## 而且注释早就写明了正确行为
+    //
+    // `queuedTaskRows` 的注释（本文件 `:1012-1013`）说:
+    // > `_queuedRow == true` -> 后端 `queued` 里有、但 `entries` 里没有
+    // > （即自动补齐的）,**首次拖动时才写入 `run_list`**
+    //
+    // ★ **注释与实现不符** —— 注释说要写, 实现里 `where` 掉了。
+    //
+    // ## 修法: 全部写进去（对齐注释）
+    //
+    // ★ 为什么这样也对（回答早先那条"不该把自动补齐写进 `run_list`"的顾虑）:
+    //
+    // 那条顾虑是"**自动补齐是派生结果, 回写会分不清'用户没编排过'
+    //   与'用户确实想要它在列表里'**"。这个顾虑对**没有被用户碰过**的
+    // 自动任务成立 —— 所以 `build_queue()` **平时**不写盘。
+    // ★ 但**用户拖动**就是"**他确实想要这个次序**"的**明确表态** ——
+    //   此时写进 `run_list` 不是"系统擅自回写", 而是"**记录用户的编排**"。
+    // ★ 不写 = 用户的拖动**必然丢失**, 那才是真 bug。
+    //
+    // ⚠ 自动补齐的行**没有 `entry_id`**（`_entryId: ''`）-> 这里不写它,
+    //   让后端生成一个新的（`RunEntry` 会补）。
+    final rebuilt = working
         .map((r) => {
               'kind': '${r['kind']}',
               if ('${r['kind']}' == 'task') 'task': '${r['task']}',
               // ★ 保留条目身份（为空则不写, 让后端生成）
               if (('${r['entry_id'] ?? ''}').isNotEmpty)
                 'entry_id': '${r['entry_id']}',
+              // ★ 保留**段名**（后端据此校验"休息不能排中间"）
+              if (('${r['group'] ?? ''}').isNotEmpty) 'group': '${r['group']}',
               if ('${r['kind']}' != 'task') 'minutes': r['minutes'],
             })
         .toList();
+
+    // ★★★ S7: 「休息」条目**恒排最后**（用户确认的唯一硬约束）★★★
+    //
+    // 用户原话: "**任意拖，但「休息」条目仍强制排最后**"
+    //
+    // 理由是它会**阻塞列表**（跑完前面的才继续）—— 放在中间会把
+    // 它后面的任务全挡住。
+    //
+    // ★ 这里是**归一化**（把它挪到最后）而不是**拒绝**:
+    //   用户把它拖到哪都接受, 只是落库时归位。
+    // ★ 后端 `Config.place_rest_last()` 会**再兜一次**
+    //   （防止别的客户端或直接调 API 绕过）。
+    // ★ 用 `List.sort` 是**稳定**的吗? Dart 的 `List.sort` **不保证稳定** ——
+    //   所以这里用**两趟过滤**（先任务、后休息）, 天然保序。
+    final tasks = rebuilt
+        .where((e) => '${e['kind']}' == 'task')
+        .toList();
+    final rests = rebuilt
+        .where((e) => '${e['kind']}' != 'task')
+        .toList();
+
     entries
       ..clear()
-      ..addAll(entryRows);
+      ..addAll(tasks)
+      ..addAll(rests);
     update();
     _saveEntries();
   }
+
+  // ★★★ S7: `dragRejection()` / `_sameGroupReorder()` / `_lastDragReason`
+  // **已删除**（用户裁定）★★★
+  //
+  // 用户原话:
+  // > "固定任务优先和定时任务优先以及**不能跨类别拖动太蠢了**。
+  // >  我只需要保持**可以自由拖动/改变执行顺序**就行。"
+  //
+  // ★ 它们实现的是"非自定义模式下不能跨类别拖动"那条约束 ——
+  //   现在**拖动永远自由**, 后端也不再校验（`_check_drag_allowed` 已删）。
+  //
+  // ⚠ 连带删掉了 `test/drag_constraint_behavior_test.dart` 的 18 条
+  //   `dragRejection` 行为测试 —— 它们钉的是一个**已废除的规则**。
+  //   ★ 替代它们的是新的「快捷排序」测试（见 `test/queue_sort_test.dart`）。
 
   /// **第 3 类**: 已启用 / 次数任务 / 还没进队列。
   ///
@@ -1154,13 +1343,10 @@ class TaskListController extends GetxController with LogMixin {
           t['queued'] != true)
       .toList();
 
-  /// `_allTasks` 里按命令名取整行。
-  Map<String, dynamic> overviewRowOf(String command) {
-    for (final t in _allTasks) {
-      if ('${t['command']}' == command) return t;
-    }
-    return const {};
-  }
+  // ★★ T10（审计修复）: `overviewRowOf()` **已删除** ★★
+  //
+  // 它在 `_allTasks` 里线性查一行 —— **只读**、**无调用方**（引用数 = 1）。
+  // ★ `taskRowOf()` 是同一个用途的**在用**版本（`queue_panel` 等在用）。
 
   /// 【添加任务】的候选 —— **走后端端点**（不在前端重新实现过滤规则）。
   ///
@@ -1183,6 +1369,16 @@ class TaskListController extends GetxController with LogMixin {
   /// 返回值是后端给的中文提示（message），直接拿去展示。
   ///
   /// :return: 后端给的中文提示（失败时返回错误文本）
+  /// **一键清空执行队列**（⑦）—— 返回后端的中文提示。
+  Future<String> clearQueue() async {
+    final res = await _api.clearQueue(scriptName);
+    if (res['ok'] == true) {
+      await reload();
+      return '${res['message'] ?? '已清空队列'}';
+    }
+    return '清空失败: ${res['error'] ?? '未知错误'}';
+  }
+
   /// 移出队列。
   ///
   /// ★ [entryId]: **精确移除某一条**（⑨）。同名条目必须带它, 否则
@@ -1290,24 +1486,131 @@ class TaskListController extends GetxController with LogMixin {
   /// 虽然同属一个库（能调私有成员）, 但**公开名字更清楚地表达"这是对外契约"**。
   Future<void> saveEntriesNow() => _saveEntries();
 
+  /// 保存运行列表到后端；**失败一定上屏 + 回滚**。
+  ///
+  /// ## ★★ 实机验收修复: 原来的判失败方式**漏掉了网络失败** ★★
+  ///
+  /// 原来写:
+  /// ```dart
+  /// final res = await _api.putRunList(scriptName, entries);
+  /// if (res.containsKey('error')) { ... }
+  /// ```
+  /// 而 `putRunList` 是:
+  /// ```dart
+  /// final res = await request(...);
+  /// return res.data ?? {};        // ★ 网络失败 -> `{}`
+  /// ```
+  /// -> **网络失败返回 `{}`** -> `containsKey('error')` 为 **false**
+  ///    -> 被当成**成功** -> **不提示、不回滚** -> **静默丢弃用户的拖动**。
+  ///
+  /// ★ 这与本项目一贯纪律"**让静默失败变成看得见**"直接冲突,
+  ///   而且它**正是"拖动弹回但没有任何提示"的一种成因**。
+  ///
+  /// ## ★★★ 第二次修: 成功判据原来会把**后端拒绝**当成成功 ★★★
+  ///
+  /// 我上一版写:
+  /// ```dart
+  /// final ok = res.containsKey('entries') || res.containsKey('count');
+  /// ```
+  /// 而**后端拒绝拖动时**返回的是（`schema_router.py` 的 `_check_drag_allowed`
+  /// 分支）:
+  /// ```python
+  /// return {'error': reason, 'drag_blocked': True,
+  ///         'entries': rl.to_list()}     # ★★ 带着 `entries`！
+  /// ```
+  /// -> **`ok` 为 `true`** -> 被当成"**保存成功**" ->
+  ///    **不提示、不回滚** -> 而磁盘**根本没存** ->
+  ///    下次 `reload()` 又拉回旧顺序。
+  ///
+  /// ★ 用户体感（实机原话）:
+  /// > "**现在三种调度优先级，都变成随便拖了**"
+  ///
+  /// ★ 也就是: **后端一直在拒绝, 但前端一声不吭**。这与本项目纪律
+  ///   "让静默失败变成看得见"**直接冲突** —— 而且是**我**引入的
+  ///   （我上一版为了修"网络失败被当成功", 把判据改成"含 entries 就算成功",
+  ///    却**没查后端失败时返回什么形状**）。
+  ///
+  /// ## 正确判据（**先看否定信号, 再看肯定信号**）
+  ///
+  /// 1. `error` 非空      -> **失败**（后端给了可读原因）
+  /// 2. `drag_blocked` 真 -> **失败**（拖动被约束拒绝）
+  /// 3. 否则要 `entries`/`count` 才算成功（防网络失败返回 `{}`）
   Future<void> _saveEntries() async {
-    final res = await _api.putRunList(scriptName, entries);
-    if (res.containsKey('error')) {
-      Get.snackbar('保存失败', '${res['error']}');
+    Map<String, dynamic> res;
+    try {
+      res = await _api.putRunList(scriptName, entries);
+    } catch (exc) {
+      // `request()` 自己会吞异常返回 ApiResult, 但保险起见兜一层
+      //
+      // ⚠⚠ **`GetxController` 没有 `mounted`**（那是 `State` 的）——
+      //   我第一版写了 `if (mounted)`; `flutter analyze` **没报**,
+      //   而 `flutter test` 的编译器直接报
+      //   `The getter 'mounted' isn't defined for the class
+      //    'TaskListController'`。
+      //   ★ 教训: **analyze 干净 != 能编译**（analyze 只做静态检查,
+      //     不解析全部泛型/继承链）。
+      _snack('保存失败', '请求异常：$exc');
+      await reload();
+      return;
+    }
+
+    // ★ ① 后端给了错误 -> 失败（**这条必须在"含 entries"之前判**）
+    final err = '${res['error'] ?? ''}';
+    // ★ ② 拖动被约束拒绝 -> 失败
+    final blocked = res['drag_blocked'] == true;
+    // ★ ③ 都没有否定信号时, 才要求肯定信号（防网络失败 `{}`）
+    final acked = res.containsKey('entries') || res.containsKey('count');
+
+    if (err.isNotEmpty || blocked || !acked) {
+      final why = err.isNotEmpty
+          ? err
+          : (blocked
+              ? '队列顺序不符合当前调度优先级 —— 该拖动未被接受。'
+              : '后端没有确认保存（返回 '
+                  '${res.isEmpty ? "空" : res.keys.toList()}）'
+                  '—— 可能是网络断了或后端没在跑。');
+      _snack(blocked ? '不能跨类别拖动' : '保存失败', why);
       // 保存失败 -> 回滚到服务端状态, 免得界面显示的和实际不一致
       await reload();
     }
   }
 
-  /// 「恢复默认」= 清空列表 -> 回退到内置 `list_pos` 顺序。
-  Future<void> resetToDefault() async {
-    final ok = await _confirm('恢复默认顺序', '将清空运行列表, 回到内置默认顺序。');
-    if (!ok) return;
-    entries = [];
-    update();
-    await _saveEntries();
-    await reload();
+  /// 统一的上屏提示。
+  ///
+  /// ⚠ **不要**在 `GetxController` 里写 `if (mounted)` —— 它没有那个 getter。
+  ///   测试环境里没有 `GetMaterialApp`, `Get.snackbar` 会抛 -> 兜住即可。
+  void _snack(String title, String message) {
+    try {
+      Get.snackbar(title, message,
+          snackPosition: SnackPosition.BOTTOM,
+          duration: const Duration(seconds: 5));
+    } catch (_) {
+      // 测试环境没有 GetMaterialApp -> 忽略（不要让提示失败变成新 bug）
+    }
   }
+
+  /// ★★ T10（审计修复）: `resetToDefault()` **已删除** ★★
+  ///
+  /// ## 为什么删（它是**危险**的死代码）
+  ///
+  /// ```dart
+  /// Future<void> resetToDefault() async {
+  ///   final ok = await _confirm('恢复默认顺序', '将清空运行列表, ...');
+  ///   if (!ok) return;
+  ///   entries = [];            // ★★ 清空用户的编排
+  ///   update();
+  ///   await _saveEntries();
+  ///   await reload();
+  /// }
+  /// ```
+  ///
+  /// * **它会清空 `run_list`** —— 也就是用户**一行行拖出来的执行顺序**
+  /// * 而 `lib/` 内**没有任何调用方**（实测引用数 = 1, 就是它自己的定义）
+  ///
+  /// ★ 一个"没人用、但一旦误接线就**毁掉用户编排**"的方法, 留在代码里
+  ///   只有风险没有收益。**删掉。**
+  /// ★ 真要"回默认顺序", 用户可以在队列里拖 —— 或者用「清空队列」
+  ///   （`clearQueue()`, 那个有明确入口与二次确认）。
 
   // ---------------------------------------------------------------- 全局设置
   /// 队列跑空之后的行为。
@@ -1324,12 +1627,17 @@ class TaskListController extends GetxController with LogMixin {
   ///
   /// ★ 顺序要生效, 必须选「列表优先」(`/schema` 的 `list.mode_value`)。
   ///   但我们**不替用户切** —— 那会悄悄改变他的调度策略; 界面给提示。
-  Future<void> setScheduleRule(String rule) async {
-    scheduleRule = rule;
-    update();
-    await _api.putScriptArg(scriptName, 'script', 'optimization',
-        'schedule_rule', 'string', rule);
-  }
+  // ★★ 第二轮复审（待办 #5）: `setScheduleRule()` **已删除** ★★
+  //
+  // ★★ 它是这一簇里**最危险**的一个: `lib/` 内 **0 调用方**, 但
+  //   **会 `putScriptArg('schedule_rule', ...)` 写配置**。
+  //
+  // 也就是说: 只要有人重新接上它, 就会把 `schedule_rule` 写回去 ——
+  // 而那个字段 **T1 之后完全不影响排序**, 于是用户会以为
+  // "我设了列表优先, 为什么顺序还是不对"。
+  //
+  // ★ 现行做法: `setPriorityMode(v)` -> `PUT .../priority_mode/value`
+  //   （并且后端会**同时**置 `priority_mode_explicit`, 防止迁移覆盖）。
 
   // ---------------------------------------------------------------- 全局开关
   //
@@ -1393,20 +1701,85 @@ class TaskListController extends GetxController with LogMixin {
 
   // ---- 两者关系 ----
 
-  /// **定时任务优先级**：`timed`（打完当前这场就让位）/ `list`（等固定跑完）。
-  String get timedPriority =>
-      '${globalFieldValue('timed_priority', 'timed')}';
+  // ---- ★★★ S7: 「调度优先级三模式」已删除, 改成两个排序按钮 ★★★ ----
+  //
+  // ## 用户原话
+  //
+  // > "我觉得……这个**固定任务优先和定时任务优先以及不能跨类别拖动
+  // >  太蠢了**。我只需要保持**可以自由拖动/改变执行顺序**就行,
+  // >  固定任务优先和定时任务优先**直接作为一个快捷排序**就好,
+  // >  而不是定义一些没有意义的不能跨类别拖动以及**单独的调度优先级**。"
+  //
+  // ## 删掉了什么
+  //
+  // `priorityMode` / `priorityModeChoices` / `priorityModeLabel`
+  // / `dragWithinGroupOnly` / `setPriorityMode` —— 它们读的是
+  // `/schema` 的 `global_fields.priority_mode`, 而那个字段**后端已删除**。
+  //
+  // ## 现在的模型
+  //
+  // * **执行顺序 = `run_list` 的顺序本身**（唯一权威）
+  // * ★ **拖动永远自由** —— 没有任何模式或约束能拦（后端也不再校验）
+  // * 排序是**一个动作**: `sortQueueBy('timed')` / `sortQueueBy('fixed')`
+  //   -> `PUT /{script}/queue/sort` -> 后端重排 `run_list` 并写盘
+  //   -> ★ **不留状态**: 排完之后用户可以随意再拖
+  //
+  // ⚠ 唯一固定的是「休息」条目（后端 `Config.place_rest_last()` 兜底挪到最后）。
 
-  /// 可选值（后端给, 前端不硬编码）。
-  List<Map<String, dynamic>> get timedPriorityChoices =>
-      ((globalField('timed_priority')['choices'] as List?) ?? const [])
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList();
+  /// 排序请求进行中（禁用两个按钮, 防连点）。
+  bool sortingQueue = false;
 
-  Future<void> setTimedPriority(String v) async {
-    await setGlobalField('timed_priority', 'string', v);
+  /// ★ **一次性排序执行顺序** —— `by` ∈ `'timed'` / `'fixed'`。
+  ///
+  /// ★ 与旧的「切换调度优先级模式」的**本质区别**: 这**不留状态**。
+  ///   旧实现设一个 `priority_mode` 之后, 每次 `build_queue()` 都按它排,
+  ///   而且**限制拖动范围**; 现在只是"排这一次"。
+  Future<void> sortQueueBy(String by) async {
+    if (sortingQueue) return;
+    sortingQueue = true;
+    update();
+    try {
+      final res = await _api.sortQueue(scriptName, by);
+      final err = '${res['error'] ?? ''}';
+      if (err.isNotEmpty) {
+        _snack('排序失败', err);
+        return;
+      }
+      // ★ 后端会带回**重排后的** `entries` —— 直接用它, 免得界面闪一下旧顺序
+      final ents = res['entries'];
+      if (ents is List) {
+        entries = ents
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+      }
+    } catch (exc) {
+      _snack('排序失败', '请求异常：$exc');
+      return;
+    } finally {
+      sortingQueue = false;
+    }
+    // ★ 拉一次服务端真值（也把 `sortingQueue` 的新值刷进界面）
     await reload();
   }
+
+  /// ★★ T10（审计修复）: `timedPriority` / `timedPriorityChoices` /
+  /// `setTimedPriority` **三件套已删除** ★★
+  ///
+  /// 它们读的是**已废弃**的 `global_fields.timed_priority` ——
+  /// 而后端 `_global_fields()` **已不再返回**该键（S6 并入 `priority_mode`）。
+  /// 于是:
+  ///   * `timedPriorityChoices` 永远拿到**空列表**
+  ///   * `timedPriority` 永远回退到默认 `'timed'`
+  ///   * `setTimedPriority` 会去写一个**界面上不存在的字段**
+  ///
+  /// ★ 实测: `lib/` 内它们**各只有 1 处引用 = 自己的定义** -> 真正无人调。
+  /// ★ 取代它们的是上面那组 `priorityMode` / `priorityModeChoices`
+  ///   / `priorityModeLabel` / `dragWithinGroupOnly` / `setPriorityMode`。
+  ///
+  /// ⚠ 删它们**必须先改测试**: `test/task_list_panel_test.dart` 里有一条
+  ///   `expect(ctrl.contains('timedPriorityChoices'), isTrue)` —— **给死代码
+  ///   上了锁**（清理时它会失败, 于是没人敢删）。已改成断言
+  ///   `priorityModeChoices` + **反向守卫**。
 
   /// **休息时可穿插定时任务**。
   bool get restInterleave =>
@@ -1445,8 +1818,17 @@ class TaskListController extends GetxController with LogMixin {
   ///
   /// 用途: 用户修好了问题（改配置 / 换素材）之后**不想等 1 小时**,
   /// 点一下就能立刻重试。见 `module/config/failure_state.py`。
+  ///
+  /// ## ★★ 审计修复: 键**归一化**（双保险）★★
+  ///
+  /// 后端 `failure_state` 的键是**小写、去下划线**（`_norm()`）——
+  /// 实测 `log/.failure_state.json` 的键是 `demonencounter`。
+  /// 调用方若传了 `demon_encounter`（下划线形式）或 `DemonEncounter`
+  /// （大驼峰形式）, 后端 `pop` 会**静默不命中**。
+  ///
+  /// ★ 这里统一成后端口径; 与 `recordOf()` 用**同一个** `_normKey`。
   Future<void> clearFailure(String taskKey) async {
-    await _api.clearFailureState(scriptName, task: taskKey);
+    await _api.clearFailureState(scriptName, task: _normKey(taskKey));
     await reload();
   }
 

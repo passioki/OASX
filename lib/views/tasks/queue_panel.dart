@@ -94,6 +94,16 @@ class _QueuePanelState extends State<QueuePanel> {
                   label: Text('添加任务'
                       '${c.enabledNotQueuedTasks.isEmpty ? '' : ' (${c.enabledNotQueuedTasks.length})'}'),
                 ),
+                // ★★ ⑦: **一键清空队列**（带确认弹窗）★★
+                //
+                // 语义与"单个移除"一致: 后端会把 `run_list` 置空 **并**停用所有
+                // `auto_queue` 任务 —— 否则它们会被 `build_queue()` 补回队列。
+                // **不删任何任务配置**, 随时可以重新启用 + 加回来。
+                TextButton.icon(
+                  onPressed: () => _confirmClearQueue(context),
+                  icon: const Icon(Icons.playlist_remove, size: 16),
+                  label: const Text('清空队列'),
+                ),
               ],
             ),
 
@@ -149,7 +159,30 @@ class _QueuePanelState extends State<QueuePanel> {
                 padding: EdgeInsets.symmetric(vertical: 12),
                 child: Text('（队列为空 —— 点右上「添加任务」，或先启用定时任务）'),
               )
-            else
+            else ...[
+              // ★★ S6: **类别分段视觉** ★★
+              //
+              // 用户裁定:
+              //   "拖动只在同类别内生效是在选了**定时优先**或者**固定任务优先**
+              //    时, 如果选了**列表自定义**, 那么全都可以拖动次序。"
+              //
+              // 所以"只能同段内拖"时, 上面画一条**分段条** —— 一眼看出
+              // "队列被分成两段、哪段在前"。
+              //
+              // ⚠ 我第一版用 `Row(crossAxisAlignment: stretch)` 把标签栏放在
+              //   列表**左侧** —— **布局崩了**: 外层是 `SingleChildScrollView`
+              //   （垂直**无界**）, 而 `stretch` 要求纵向填满 -> 约束非法
+              //   （2 个 widget 测试报 `invalid constraints ... RenderClipRect`）。
+              //   ★ 改成**不用 `Row`**、放在列表**上方**。
+              // ★★★ S7: 类别条**恒显示**（用户裁定）★★★
+              //
+              // 原来这里是 `if (c.dragWithinGroupOnly) _segmentBar(...)`
+              // —— 只在"非自定义模式"下显示, 因为那时它要**解释拖动约束**。
+              //
+              // ★ 用户裁定删掉三模式与跨类别约束（"我只需要保持可以自由
+              //   拖动/改变执行顺序就行"）-> `dragWithinGroupOnly` 已删。
+              // ★ 现在它只是**信息条**: 告诉你这堆条目里定时/固定各几条。
+              _segmentBar(context),
               // ★ 用 `ReorderableListView` 拖拽 ——
               //   `shrinkWrap` + `NeverScrollableScrollPhysics`:
               //   它住在外层 `ListView` 里, 自己不该再滚。
@@ -161,6 +194,7 @@ class _QueuePanelState extends State<QueuePanel> {
                 onReorder: c.reorderQueue,
                 itemBuilder: (_, i) => _queueRow(context, i),
               ),
+            ],
 
             // ---------- 分类 3 的提示（**不在这里罗列**）----------
             //
@@ -375,6 +409,50 @@ class _QueuePanelState extends State<QueuePanel> {
         duration: const Duration(seconds: 6));
   }
 
+  /// ★★ ⑦: **一键清空队列** —— 确认后调用后端 `POST /queue/clear`。
+  ///
+  /// ★ 弹窗必须说清**两件事**（否则用户会以为任务被删了）:
+  ///   1. 会**同时停用**定时任务（否则它们被自动补回队列）
+  ///   2. **不删任何任务配置**, 随时可以重新启用 + 加回来
+  Future<void> _confirmClearQueue(BuildContext context) async {
+    final n = c.queuedTaskRows.length;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清空整个执行队列？'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('队列里现在有 **$n** 条条目，全部移出。'),
+            const SizedBox(height: 8),
+            const Text('**定时任务会被同时停用** —— 否则它们会被自动补回队列；'
+                '次数任务只离开队列。'),
+            const SizedBox(height: 8),
+            const Text('**不会删除任何任务配置**，随时可以重新启用 + 【添加任务】加回来。'),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(ctx).colorScheme.error),
+            child: const Text('清空'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final message = await c.clearQueue();
+    if (!context.mounted) return;
+    Get.snackbar('已清空队列', message,
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 6));
+  }
+
   // ---------------------------------------------------------------- 已编排行
 
   /// 一行「执行顺序」条目。
@@ -410,6 +488,76 @@ class _QueuePanelState extends State<QueuePanel> {
         '${two(at.hour)}:${two(at.minute)}';
   }
 
+  /// ★★ S6: **类别分段条**（放在队列**上方**）★★
+  ///
+  /// 显示成: `定时任务 3 条` ｜ `固定任务 12 条`, 前段那一边**高亮**。
+  ///
+  /// ★ 与队列**同一顺序依据**: `c.queuedTaskRows`（后端 `_segment_queue()`
+  ///   已按模式排好段）—— 所以"第一个出现的段"就是"排在前面的段"。
+  ///
+  /// ★ 它**不参与拖拽**（在 `ReorderableListView` **外面**）, 不会打乱
+  ///   `reorderQueue` 的下标。
+  ///
+  /// ⚠ **不能**用 `Get.find<TaskListController>()` —— 队列面板在多账号场景
+  ///   下靠 **tag** 注册; 无 tag 的 `find` 会**抛异常**（实测 2 个测试失败）。
+  ///   用面板自己的控制器（`c` getter）。
+  Widget _segmentBar(BuildContext context) {
+    final rows = c.queuedTaskRows
+        .where((r) => '${r['kind']}' == 'task')
+        .toList();
+    if (rows.isEmpty) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+
+    String gid(Map<String, dynamic> r) => '${r['group'] ?? 'fixed'}';
+    final firstGroup = gid(rows.first);
+    final nTimed = rows.where((r) => gid(r) == 'timed').length;
+    final nFixed = rows.length - nTimed;
+    final timedFirst = firstGroup == 'timed';
+
+    Widget seg(String label, int n, bool timed, bool leading) {
+      final on = leading;      // 排在前面的段高亮
+      final col = timed ? scheme.primary : scheme.tertiary;
+      return Container(
+        margin: const EdgeInsets.only(right: 6, bottom: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: on ? col.withValues(alpha: 0.18) : null,
+          border: Border.all(
+              color: on ? col : scheme.outlineVariant,
+              width: on ? 1.2 : 1),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          '$label $n 条',
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: on ? col : scheme.onSurfaceVariant,
+                fontWeight: on ? FontWeight.w700 : FontWeight.w400,
+              ),
+        ),
+      );
+    }
+
+    return Tooltip(
+      // ★★★ S7: 文案改了（用户裁定）★★★
+      //
+      // 原来写的是「当前「XX」模式下, 队列**按类别分段** …… **只能在同一
+      // 段内拖动**。想自由拖动请把「调度优先级」改成「自定义」。」
+      //
+      // ★ 三模式与跨类别约束都删了 -> 那段话**已经不成立**。
+      // ★ 现在只说清"这是什么"与"能怎么拖"。
+      message: '这是当前执行队列里**定时任务 / 固定任务**各有多少条。\n'
+          '${timedFirst ? "定时任务" : "固定任务"}段目前排在前面。\n'
+          '★ **所有条目都能自由拖动**, 不限类别。\n'
+          '★ 只有「休息」条目固定排在最后（它会挡住后面的任务）。',
+      child: Wrap(
+        children: [
+          seg('定时任务', nTimed, true, timedFirst),
+          seg('固定任务', nFixed, false, !timedFirst),
+        ],
+      ),
+    );
+  }
+
   Widget _queueRow(BuildContext context, int i) {
     final rows = c.queuedTaskRows;
     if (i < 0 || i >= rows.length) return const SizedBox.shrink();
@@ -422,6 +570,24 @@ class _QueuePanelState extends State<QueuePanel> {
     final row = isTask ? c.taskRowOf(cmd) : null;
     final isPending = row == null || '${row['slot']}' == 'pending';
 
+    // ★★ ③: **按类别区分**「定时任务」与「次数/固定任务」★★
+    //
+    // 用户原话:
+    //   "如果是因为次数类只能在次序类里拖动, 定时只能在定时类任务队拖动,
+    //    那么请用**不同颜色或两个边框框住来区分**。"
+    //
+    // 所以: 左侧一条**色条** + 一个类别小标签。色条比整行底色更克制,
+    // 不会和「未到开放时间」的灰化冲突。
+    //
+    // ★ 类别来自后端（`taskRowOf` 的 `category` / `auto_queue`）,
+    //   前端**不重新推导**调度规则。
+    final isAutoTask = isTask && c.isAutoQueue(cmd);
+    final accent = !isTask
+        ? Theme.of(context).colorScheme.outline
+        : (isAutoTask
+            ? Theme.of(context).colorScheme.primary // 定时
+            : Theme.of(context).colorScheme.tertiary); // 次数/固定
+
     // 「休息」条目给不同底色 —— 一眼看出"这里会停"
     final bg = isTask
         ? null
@@ -429,7 +595,15 @@ class _QueuePanelState extends State<QueuePanel> {
 
     return Container(
       key: ValueKey('queue-$i-${isTask ? cmd : 'rest-${e['minutes']}'}'),
-      color: bg,
+      // ★ 必须用 `decoration` 而不是 `color` —— Flutter 的 `Container`
+      //   **不允许**同时给 `color` 与 `decoration`（会 assert 崩）。踩过。
+      decoration: BoxDecoration(
+        color: bg,
+        // ★ ③ 左侧色条 —— 类别区分（定时 = primary, 次数 = tertiary）
+        border: isTask
+            ? Border(left: BorderSide(color: accent, width: 3))
+            : null,
+      ),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 2),
         child: Column(
@@ -456,6 +630,42 @@ class _QueuePanelState extends State<QueuePanel> {
                 Expanded(
                   child: Row(
                     children: [
+                      // ★★ ③: 类别小标签 —— 「定时」/「次数」★★
+                      //
+                      // 用户: "请用**不同颜色或两个边框**来区分"。
+                      // 色条在左边（`decoration`）, 这里再给一枚文字标签,
+                      // 色盲用户/截图里也能分辨。
+                      // ★ 说明走 Tooltip（用户要求"括号改悬停"）。
+                      if (isTask) ...[
+                        Tooltip(
+                          message: isAutoTask
+                              ? '**定时任务** —— 启用后自动进队列；'
+                                  '有开放窗口，窗口内才会跑。\n'
+                                  '移出队列会**同时停用它**。'
+                              : '**次数任务** —— 需要手动【添加任务】才进队列；'
+                                  '跑满设置的次数就停。\n'
+                                  '移出队列**不会停用**它，可随时加回来。',
+                          child: Container(
+                            margin: const EdgeInsets.only(right: 6),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 5, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: accent.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              isAutoTask ? '定时' : '次数',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(
+                                    color: accent,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                            ),
+                          ),
+                        ),
+                      ],
                       Flexible(
                         child: Text(
                           isTask ? _zhName(cmd) : '休息 ${e['minutes']} 分钟',
@@ -516,8 +726,26 @@ class _QueuePanelState extends State<QueuePanel> {
                     if (isTask) {
                       // ★ ⑨: 带上**条目身份** —— 否则同名多条会被**一删全删**
                       final eid = '${e['_entryId'] ?? ''}';
-                      await _confirmAndRemove(context, cmd,
-                          entryId: eid.isEmpty ? null : eid);
+                      final eidOrNull = eid.isEmpty ? null : eid;
+                      // ★★ ⑤: **次数类不弹确认**, 定时类才弹（用户要求）★★
+                      //
+                      // 用户原话: "**次数类任务被移除时不需要弹窗确认,
+                      //           只有定时类任务才需要。**"
+                      //
+                      // 理由（我理解的）: 次数任务移除只是"出队列", 不会停用,
+                      // 加回来一步就够, 弹窗是多余的摩擦; 而定时任务移除会
+                      // **同时停用**, 影响更大, 值得确认。
+                      if (!c.isAutoQueue(cmd)) {
+                        final msg = await c.removeFromQueue(cmd,
+                            entryId: eidOrNull);
+                        if (!context.mounted) return;
+                        Get.snackbar('已移出队列', msg,
+                            snackPosition: SnackPosition.BOTTOM,
+                            duration: const Duration(seconds: 5));
+                      } else {
+                        await _confirmAndRemove(context, cmd,
+                            entryId: eidOrNull);
+                      }
                     } else {
                       // 「休息」条目只存在于 run_list -> 直接按条目下标删
                       final ei = e['_entryIndex'];
@@ -603,6 +831,28 @@ class _QueuePanelState extends State<QueuePanel> {
               await c.setTaskPriority(key, n);
               await c.reload();
             },
+          ),
+          // ★★ ④: **进该任务的设置页**（用户要求"别的任务行上也应该有"）★★
+          //
+          // 实测: 调度 tab 的 `TaskRowView` 有 `onTap -> openTaskSettings`,
+          // 而队列行**没有** -> 用户看到"设置入口只在正在运行的任务行上"。
+          //
+          // ★ 用 `openTaskSettings` 而不是 `switchContent`: 后者有
+          //   `useablemenus` 白名单（只列侧边栏里有的任务）, 点不在侧边栏的
+          //   任务会被**静默忽略** -> "点了没反应"（踩过, 见 task_list_view）。
+          Tooltip(
+            message: '打开「${_zhName(cmd)}」的**任务设置**',
+            child: TextButton.icon(
+              icon: const Icon(Icons.tune, size: 15),
+              label: const Text('设置'),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                minimumSize: const Size(0, 28),
+              ),
+              onPressed: () =>
+                  Get.find<NavCtrl>().openTaskSettings(cmd),
+            ),
           ),
         ],
       ),
