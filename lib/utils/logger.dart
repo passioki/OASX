@@ -6,22 +6,58 @@ import 'package:logger/logger.dart';
 
 late Logger logger;
 
+/// ★★★ 启动期**兜底日志器**（不依赖文件系统）★★★
+///
+/// ## 为什么必须有（实测踩到的真故障）
+///
+/// 原实现是 `getApplicationCacheDirectory().then((dir) { ... logger = ... })`
+/// —— **既没有 `await`，也没有 `catchError`**。于是:
+///
+/// 1. `initLogger()` **立刻返回**，`logger` 仍是**未初始化的 `late`**；
+///    此时任何 `logger.x` 都会抛 `LateInitializationError`。
+/// 2. 若那个 `.then` 回调里抛异常（例如**目录不可写**:
+///    `PathAccessException ... errno = 5`），它就成了一个
+///    **未捕获的异步异常** —— 会**把进程整个带走**。
+///
+/// ★ 实测: 用户机器上 `%LOCALAPPDATA%\<appId>` 与
+///   `Documents\GetStorage.gs` 都被拒绝访问(errno=5) ->
+///   日志/存储初始化抛异常 -> `initService()` 抛出 ->
+///   `runApp()` **永不执行** -> **窗口永不出现**（进程活着 = "打不开"）。
+///
+/// ★ 所以: 先给一个**一定能用**的控制台日志器；文件日志成功了再替换。
+///   写不出文件只是"没日志"，**绝不该让应用起不来**。
+Logger _fallbackLogger() => Logger(
+      filter: ProductionFilter(),
+      printer: SimplePrinter(printTime: true),
+      output: CustomConsoleOutput(),
+    );
+
 Future<void> initLogger() async {
-  getApplicationCacheDirectory().then((appDocDir) {
-    String logPath = appDocDir.path;
-    Directory logDir = Directory('$logPath/logs');
+  // ★ 先兜底: 保证 `logger` 在任何情况下都**已被赋值**
+  logger = _fallbackLogger();
+
+  try {
+    // ★★ 必须 `await` —— 见上面的说明
+    final appDocDir = await getApplicationCacheDirectory();
+    final logPath = appDocDir.path;
+    final logDir = Directory('$logPath/logs');
     if (!logDir.existsSync()) {
       logDir.createSync(recursive: true);
     }
-    String dateTime = DateTime.now().toIso8601String().substring(0, 10);
+    final dateTime = DateTime.now().toIso8601String().substring(0, 10);
     logger = _getLogger(logDir.path, dateTime);
     logger.i('---------------------------------------------------------------');
     logger.i('Logger initialized');
     logger.i('log path: ${logDir.path}/$dateTime.txt');
     logger.i('App path: ${Directory.current.path}');
 
-    _cleanupOldLogs(logDir.path);
-  });
+    await _cleanupOldLogs(logDir.path);
+  } catch (e) {
+    // ★ 文件日志不可用**不是致命错误** —— 降级到控制台继续启动
+    logger = _fallbackLogger();
+    logger.w('日志目录不可用, 已降级为控制台日志: $e');
+    logger.w('App path: ${Directory.current.path}');
+  }
 }
 
 class CustomConsoleOutput extends LogOutput {
