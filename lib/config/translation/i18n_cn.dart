@@ -134,6 +134,7 @@ final Map<String, String> _cn_menu = {
   I18n.soul_zones: '御魂副本',
   I18n.orochi: '八岐大蛇',
   I18n.sougenbi: '业原火',
+  I18n.rest: '休息',
   I18n.fallen_sun: '日轮之陨',
   I18n.eternity_sea: '永生之海',
   I18n.daily_task: '日常任务',

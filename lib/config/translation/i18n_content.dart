@@ -125,6 +125,7 @@ class I18n {
   static const String soul_zones = 'Soul Zones';
   static const String orochi = 'Orochi';
   static const String sougenbi = 'Sougenbi';
+  static const String rest = 'Rest';
   static const String fallen_sun = 'FallenSun';
   static const String eternity_sea = 'EternitySea';
   static const String daily_task = 'Daily Task';
