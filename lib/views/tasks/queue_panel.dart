@@ -41,9 +41,18 @@ part of task_list;
 /// | **任务表格** | Excel 式的**批量查看与管理**（启停 / 运行一次 / 排序 / 筛选）—— **不改执行顺序** |
 /// | **执行队列** | **执行顺序**（拖拽）+ 每任务的次数与预期耗时 |
 class QueuePanel extends StatefulWidget {
-  const QueuePanel({super.key, required this.controller});
+  const QueuePanel({super.key, required this.controller, this.header});
 
   final TaskListController controller;
+
+  /// ★ 可选: 放在队列**上方**、但属于**同一个滚动体**的内容。
+  ///
+  /// ★ 用途: 「快捷排序 + 全局开关」那一行（在 `_QueueTab`）。
+  ///   它必须住进这里的 `ReorderableListView.header` ——
+  ///   因为**本 widget 是唯一的滚动容器**（见 `build()` 的说明）,
+  ///   外层若再套 `ListView` 就是"滚动套滚动"（Flutter 会抛
+  ///   "垂直方向无界高度"）。
+  final Widget? header;
 
   @override
   State<QueuePanel> createState() => _QueuePanelState();
@@ -72,12 +81,48 @@ class _QueuePanelState extends State<QueuePanel> {
     final waiting = queued.where((t) => t['slot'] != 'pending').toList();
     final sm = _scriptModel();
 
+    // ★★★ 本 widget 自己就是**唯一**的滚动容器（修用户报的 #7）★★★
+    //
+    // ## 用户原话
+    //
+    // > "在**拖动任务超出窗口范围时，滚动条并不会随之滚动**，导致从队尾移到
+    // >  队首时需要拖动好几次。"
+    //
+    // ## 根因（实测）
+    //
+    // Flutter 的**拖动自动滚动**（`autoScrollerVelocityScalar`）挂在
+    // **可滚动列表自己**身上。原来可拖的行住在一个
+    //     `ReorderableListView(shrinkWrap: true,
+    //                           physics: NeverScrollableScrollPhysics())`
+    // 里 —— ★ 它被明确设成"**不可滚**" -> 拖到边缘**不滚**
+    // -> 只能"拖一点、松手、滚一下、再拖"。
+    //
+    // ## 现在
+    //
+    // ★ 让**那个 `ReorderableListView` 自己**成为滚动容器
+    //   （去掉 `shrinkWrap` 与 `NeverScrollableScrollPhysics`）——
+    //   列表能滚 -> **自动滚动生效** -> 队尾拖到队首**一次**就行。
+    // ★ 不可拖的部分（标题/按钮/调度状态/说明）进 `header` / `footer`
+    //   —— 它们是同一个滚动体的一部分, 随内容滚（符合预期）。
+    //
+    // ⚠ `_QueueTab` **不许**再用 `ListView` 包本 widget ——
+    //   那就是"滚动套滚动", Flutter 会直接抛"垂直方向无界高度"。
     return Card(
-      child: Padding(
+      child: ReorderableListView.builder(
         padding: const EdgeInsets.all(12),
-        child: Column(
+        buildDefaultDragHandles: false,
+        itemCount: c.queuedTaskRows.length,
+        onReorder: c.reorderQueue,
+        itemBuilder: (_, i) => _queueRow(context, i),
+        header: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ★ 调用方给的上方内容（`_QueueTab` 的快捷排序 + 全局开关）——
+            //   与队列**同一个滚动体**, 所以随内容一起滚。
+            if (widget.header != null) ...[
+              widget.header!,
+              const Divider(height: 16),
+            ],
             Row(
               children: [
                 Expanded(
@@ -183,19 +228,13 @@ class _QueuePanelState extends State<QueuePanel> {
               //   拖动/改变执行顺序就行"）-> `dragWithinGroupOnly` 已删。
               // ★ 现在它只是**信息条**: 告诉你这堆条目里定时/固定各几条。
               _segmentBar(context),
-              // ★ 用 `ReorderableListView` 拖拽 ——
-              //   `shrinkWrap` + `NeverScrollableScrollPhysics`:
-              //   它住在外层 `ListView` 里, 自己不该再滚。
-              ReorderableListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                buildDefaultDragHandles: false,
-                itemCount: c.queuedTaskRows.length,
-                onReorder: c.reorderQueue,
-                itemBuilder: (_, i) => _queueRow(context, i),
-              ),
-            ],
+            ],   // ★ 关闭 `else ...[` 的那个列表
+          ],     // ★ 关闭 header 的 children
+        ),       // ★ 关闭 header: Column(
 
+        footer: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             // ---------- 分类 3 的提示（**不在这里罗列**）----------
             //
             // 用户原话: "启用的任务但不会执行的任务应该出现在添加任务里,

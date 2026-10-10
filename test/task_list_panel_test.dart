@@ -312,6 +312,22 @@ Map<String, dynamic> taskRow(
     };
 }
 
+// ★★★ 两套包装（本轮新增 `wrapBounded`）★★★
+//
+// ⚠ `QueuePanel` 现在是**自己的滚动容器**（修用户报的 #7:
+//   拖动越界不自动滚动 —— 它内部那个 `ReorderableListView` 从
+//   "不可滚"改成了"可滚"）。
+//   ★ 所以**不能再**把它塞进 `SingleChildScrollView`:
+//     那是"滚动套滚动", `ReorderableListView` 会拿到**无界高度**
+//     并抛 `constraints: 0<=h<=Infinity`（实测抓到 2 条 widget 测试崩）。
+//
+// ★ `wrapBounded` 用 `Scaffold(body: child)` —— 与**生产**一致:
+//   生产是 `Expanded(child: _bodyFor(...))`, 给的正是**有界**高度。
+Widget wrapBounded(Widget child) => GetMaterialApp(
+      home: Scaffold(body: child),
+    );
+
+/// 给"内容**不是**滚动容器"的 widget 用（如 `_ScheduleTab` 用 `ListView`）。
 Widget wrap(Widget child) => GetMaterialApp(
       home: Scaffold(body: SingleChildScrollView(child: child)),
     );
@@ -660,7 +676,7 @@ void _round4Tests() {
         taskRow('RealmRaid', zh: '个人突破', countable: true),
       ],
     );
-    await tester.pumpWidget(wrap(QueuePanel(controller: c)));
+    await tester.pumpWidget(wrapBounded(QueuePanel(controller: c)));
     await tester.pump();
 
     expect(find.text('逢魔之时'), findsOneWidget);
@@ -958,20 +974,38 @@ void _phase2Tests() {
         reason: '「执行队列」区块必须在');
     expect(view.contains('_bodyFor('), isTrue,
         reason: '★ 必须由 `_bodyFor()` 按导航选择决定显示哪个区块');
-    expect(view.contains("'QueuePanel'"), isTrue,
-        reason: "★ 必须识别导航键 'QueuePanel'（= 执行队列）");
-    // ⚠ `TaskListPanel`（= 任务列表）**不需要**显式判断 —— 它是
-    //   `_bodyFor` 的**默认分支**（`else` 返回 `_ScheduleTab`）。
-    //   ★ 所以这里断言"默认返回任务列表面板"这件事本身,
-    //     而不是断言一个并不存在的标识符（我第一版就断言错了）。
+    // ⚠ 这里断言的是**导航键**在导航树里的定义（`ctrl_nav.dart`）,
+    //   而不是 `_bodyFor` 里的字面量 —— ★ 因为 `QueuePanel` 现在是
+    //   `_bodyFor` 的**默认分支**（不带引号出现）。写错位置就会假失败。
+    expect(view.contains("'TaskListPanel'"), isTrue,
+        reason: "★ 必须识别导航键 'TaskListPanel'（= 任务列表）");
+    final navSrc = codeOnly('lib/controller/ctrl_nav.dart');
+    expect(navSrc.contains("'TaskListPanel'") && navSrc.contains("'QueuePanel'"),
+        isTrue,
+        reason: '★ 导航树必须把「调度」展开成 TaskListPanel + QueuePanel 两个叶子');
+    // ★★★ 本轮改动: 默认分支已从「任务列表」换成「**执行队列**」★★★
+    //
+    // 用户原话: "设定 **HOME 页为执行队列页**"
+    //
+    // ★ 为什么必须一起改这里: 开屏落在**哪个区块**由 `_bodyFor` 决定
+    //   （`selectedMenu == 'TaskList'` 时走默认分支）。若默认仍是
+    //   `_ScheduleTab`, 那"首页=执行队列"只对**手动点**执行队列生效,
+    //   开屏还是任务列表 —— 等于没实现。
     final bodyForIdx = view.indexOf('Widget _bodyFor(');
     expect(bodyForIdx, greaterThan(0), reason: '必须有 `_bodyFor`');
-    final bodyFor = view.substring(bodyForIdx, bodyForIdx + 1400);
-    expect(bodyFor.contains("sel == 'QueuePanel'"), isTrue,
-        reason: '★ 只有「执行队列」需要显式判断');
-    expect(bodyFor.contains('_ScheduleTab('), isTrue,
-        reason: '★ 默认分支必须返回「任务列表」区块'
-               "（`TaskList` 与 `TaskListPanel` 都走它）");
+    final bodyFor = view.substring(
+        bodyForIdx, (bodyForIdx + 2200).clamp(0, view.length));
+    // ★ 只有「任务列表」需要**显式**判断; 其余（含默认）都走执行队列
+    expect(bodyFor.contains("sel == 'TaskListPanel'"), isTrue,
+        reason: "★ 「任务列表」需要显式判断");
+    expect(bodyFor.contains('_QueueTab('), isTrue,
+        reason: '★ 默认分支必须返回「**执行队列**」区块'
+               '（用户: "设定 HOME 页为执行队列页"）');
+    // 反向守卫: 默认分支**不能**再是任务列表
+    final tail = bodyFor.substring(bodyFor.indexOf("if (sel == 'TaskListPanel')"));
+    final afterIf = tail.substring(tail.indexOf('return _ScheduleTab(') + 1);
+    expect(afterIf.contains('return _QueueTab('), isTrue,
+        reason: '★ 默认（else）分支必须是 `_QueueTab` —— 那是"首页=执行队列"的落点');
     // ★★ 关键: 必须**订阅** `NavCtrl` —— 否则点树上的叶子页面不重建
     expect(view.contains('GetX<NavCtrl>'), isTrue,
         reason: '★ `_bodyFor` 必须用 `GetX<NavCtrl>` 订阅导航状态; '
@@ -1089,12 +1123,24 @@ void _phase2Tests() {
         reason: '执行顺序在该区块之外, 不该还在任务列表区块里');
 
     // ---------- ★ 执行队列区块: 必须有快捷排序 + QueuePanel ----------
+    //
+    // ⚠ 本轮改动: `_QueueTab.build` **不再返回 `ListView`**
+    //   （修用户报的 #7: 拖动越界不自动滚动 —— `QueuePanel` 现在自己是
+    //    唯一的滚动容器, 外层再套 `ListView` 就是"滚动套滚动"）。
+    //   ★ 所以不能再用 `indexOf('return ListView(', qi)` 定位（会得 -1
+    //     并 `RangeError`）。改为**整段取到下一个 class**。
     final qi = view.indexOf('class _QueueTab');
     expect(qi, greaterThan(0));
-    final qb = view.indexOf('return ListView(', qi);
-    final qbody = view.substring(qb, qb + 1600);
+    final qEnd = view.indexOf('\nclass ', qi + 10);
+    final qbody = view.substring(qi, qEnd > 0 ? qEnd : view.length);
     expect(qbody.contains('_sortActions('), isTrue, reason: '执行队列缺快捷排序');
     expect(qbody.contains('QueuePanel('), isTrue, reason: '执行队列缺执行顺序面板');
+    // ★ 反向守卫: 该区块**不许**再有 ListView/SingleChildScrollView
+    //   （滚动套滚动会让 `ReorderableListView` 拿到无界高度）
+    expect(qbody.contains('return ListView('), isFalse,
+        reason: '★ `_QueueTab` 不该自己套滚动容器 —— `QueuePanel` 已是唯一滚动体');
+    expect(qbody.contains('SingleChildScrollView'), isFalse,
+        reason: '★ 同上');
 
     // ---------- ★★ 全局开关必须在执行队列里（本轮核心） ----------
     //
@@ -1248,12 +1294,12 @@ void _accountSwitchTests() {
     expect(b.entries.length, 1);
 
     // 渲染两个 tag 的面板, 内容各自独立
-    await tester.pumpWidget(wrap(QueuePanel(controller: a)));
+    await tester.pumpWidget(wrapBounded(QueuePanel(controller: a)));
     await tester.pump();
     expect(find.text('逢魔之时'), findsOneWidget);
     expect(find.text('金币妖怪'), findsNothing);
 
-    await tester.pumpWidget(wrap(QueuePanel(controller: b)));
+    await tester.pumpWidget(wrapBounded(QueuePanel(controller: b)));
     await tester.pump();
     expect(find.text('金币妖怪'), findsOneWidget);
     expect(find.text('逢魔之时'), findsNothing);

@@ -2,6 +2,24 @@ part of nav;
 
 class NavCtrl extends GetxController {
   final navNameList = <String>['Home', 'oas1'].obs; // 列表
+  // ★★★ 启动默认页 = **执行队列**（用户裁定）★★★
+  //
+  // 用户原话:
+  // > "设定 **HOME 页为执行队列页**"
+  //
+  // ★ 落地方式: 启动就选中**第一个账号**(`selectedIndex = 1`) +
+  //   菜单 `'TaskList'`（导航树里的「**调度**」）。
+  //   ★ 而「调度」区块的**默认显示**是「执行队列」（见
+  //     `TaskListView._bodyFor` 的默认分支）-> 于是开屏就是执行队列。
+  //
+  // ⚠ 为什么**不**改 `'Home'` 菜单本身: `Home` 是「主页」导航项,
+  //   它下面还有「更新器 / 工具」两个子页; 把它整个换成执行队列会
+  //   连带弄丢那两个入口。★ 改"默认选中谁"更准确、副作用更小。
+  //
+  // ⚠ 初始 `selectedIndex` 用 0 而非 1: `navNameList` 此刻只有占位的
+  //   `['Home','oas1']`, 真正的账号列表要等 `onInit` 拉取后才就位。
+  //   ★ 索引越界会让 `switchScript` 直接抛异常, 所以"默认进账号页"
+  //   这件事放在 `onInit` 末尾做（那时列表已是真实的）。
   final selectedIndex = 0.obs;
   final selectedScript = 'Home'.obs; // 当前选中的名字
   final selectedMenu = 'Home'.obs; // 当前选中的第二级名字
@@ -98,6 +116,28 @@ class NavCtrl extends GetxController {
       menu[key] = items;
     });
     scriptMenuJson.value = menu;
+
+    // ★★★ 启动默认页 = **执行队列**（用户裁定: "设定 HOME 页为执行队列页"）★★★
+    //
+    // ★ 放在**这里**（`onInit` 末尾）而不是字段初始化处:
+    //   `navNameList` 此刻才拉到**真实**账号列表, 这时 `switchScript(1)`
+    //   才安全（★ 索引越界会直接抛异常）。
+    //
+    // ★ 为什么用 `switchScript(1)` 而不是手写几个 `.value = ...`:
+    //   它已经是一条**完整的切换路径**（设菜单 + 设脚本 + 注册控制器 +
+    //   校验 `useablemenus`）, 复用它避免"改了默认页却漏了某一步"。
+    //
+    // ⚠ 只有在**真的有账号**（长度 > 1）时才切 ——
+    //   没有配置时列表只有 `['Home']`, 切过去会越界。
+    try {
+      if (navNameList.length > 1) {
+        await switchScript(1);
+        printInfo(info: '启动默认页: 第一个账号 -> 调度 -> 执行队列');
+      }
+    } catch (exc) {
+      // ★ 默认页切失败**绝不能**让启动崩 —— 退回首页即可
+      printInfo(info: '默认进执行队列失败($exc), 保持首页');
+    }
 
     super.onInit();
   }

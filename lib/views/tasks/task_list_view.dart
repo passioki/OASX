@@ -565,12 +565,20 @@ class _TaskListViewState extends State<TaskListView> {
         // ⚠ `init` 兜底后 `nav` **不会为 null**（故不用 `?.`）——
         //   `GetX<T>` 的 builder 参数对非空 `T` 是非空的。
         final sel = nav.selectedMenu.value;
-        if (sel == 'QueuePanel') {
-          return _QueueTab(c: c);
+        // ★★★ 默认显示「**执行队列**」（用户裁定: "设定 HOME 页为执行队列页"）★★★
+        //
+        // 为什么把默认从 `TaskListPanel` 换成 `QueuePanel`:
+        //   * 用户要"开屏就是执行队列"
+        //   * ★ 而开屏落在**哪个区块**由这里决定（`selectedMenu == 'TaskList'`
+        //     时走**默认分支**）—— 若默认仍是 `_ScheduleTab`,
+        //     那"首页=执行队列"只对**手动点**执行队列生效, 开屏还是任务列表。
+        //   * 显式点「任务列表」(`TaskListPanel`) 仍显示任务列表, 不受影响。
+        if (sel == 'TaskListPanel') {
+          return _ScheduleTab(c: c, searchCtrl: _searchCtrl);
         }
-        // `'TaskList'`（= 导航树「调度」入口）与 `'TaskListPanel'`
-        //（= 「任务列表」）都显示任务列表区块。
-        return _ScheduleTab(c: c, searchCtrl: _searchCtrl);
+        // `'QueuePanel'`（显式点「执行队列」）与 `'TaskList'`（导航树「调度」
+        // 入口）都显示**执行队列**。
+        return _QueueTab(c: c);
       },
     );
   }
@@ -1354,26 +1362,38 @@ class _QueueTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-      children: [
-        // ★★★ S7: **快捷排序**（用户要求: 与执行顺序**同一个 tab**）★★★
-        //
-        // 用户原话:
-        // > "**快捷排序应该和执行顺序在同一个 tab 里**。"
-        //
-        // ★ 它原来在「调度」tab 的全局设置区 —— 而「执行顺序」（可拖
-        //   列表）在「执行队列」tab。**分在两个 tab = 找不到**。
-        // ★ 现在放在本 tab 最上方（`QueuePanel` 之前）, 与执行顺序同屏。
-        _sortActions(context, c),
-        const Divider(height: 16),
-
-        // 队列本体 —— 含 调度器/正在运行 · 执行顺序(拖拽) · 待执行 · 等待中
-        //
-        // ★ 这里**不放** `_monitorStrip` —— 它是 `_ScheduleTab` 的方法,
-        //   而且队列自己的"待执行 N / 等待中 N"就在下面（那才是明细）。
-        QueuePanel(controller: c),
-      ],
+    // ★★★ 本 tab **不再自己套滚动容器**（修用户报的 #7）★★★
+    //
+    // ## 用户原话
+    //
+    // > "在**拖动任务超出窗口范围时，滚动条并不会随之滚动**，导致从队尾移到
+    // >  队首时需要拖动好几次。"
+    //
+    // ## 根因与分工
+    //
+    // Flutter 的**拖动自动滚动**挂在**可滚动列表自己**身上。原来可拖的行住在
+    // 一个 `shrinkWrap: true` + `NeverScrollableScrollPhysics` 的
+    // `ReorderableListView` 里（**不可滚**）-> 拖到边缘**不滚**。
+    //
+    // ★ 现在: **`QueuePanel` 自己是唯一的滚动容器**（它内部那个
+    //   `ReorderableListView` 已改成可滚 + 带 `header`/`footer`）。
+    //   本 tab 只负责把「快捷排序 + 全局开关」交给它的 `header`。
+    //
+    // ⚠ 这里**绝不能**再用 `ListView`/`SingleChildScrollView` 包它 ——
+    //   那就是"滚动套滚动", Flutter 会抛"垂直方向无界高度"
+    //   （本项目已因嵌套滚动栽过: `queue_panel` 里有记载）。
+    return QueuePanel(
+      controller: c,
+      // ★ 快捷排序 + 全局开关 —— 进队列的 `header`（同一个滚动体, 一起滚）
+      //
+      // ★★★ S7: **快捷排序**（用户要求: 与执行顺序**同一个 tab**）★★★
+      //
+      // 用户原话:
+      // > "**快捷排序应该和执行顺序在同一个 tab 里**。"
+      //
+      // ★ 它原来在「调度」tab 的全局设置区 —— 而「执行顺序」（可拖
+      //   列表）在「执行队列」tab。**分在两个 tab = 找不到**。
+      header: _sortActions(context, c),
     );
   }
 
