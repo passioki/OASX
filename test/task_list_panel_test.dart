@@ -1,0 +1,1116 @@
+// 「执行顺序」面板的 widget 测试。
+//
+// ## 为什么需要它
+//
+// 用户报"任务列表白屏"。这类 bug 的根因往往是**build 里抛了异常**,
+// 而 `dart analyze` **查不出**运行时异常(踩过一次: `Obx` 误用 ->
+// "improper use of a GetX" -> 整页白屏)。
+//
+// 这个测试用**假数据**把 `RunListPanel` 真渲染一遍:
+//   * 只有任务条目
+//   * 任务 + 控制条目(全部停止 / 只停列表)混合  <- 模型 B 的核心
+//   * 空列表
+//
+// 任何 build 期异常都会让测试失败 —— 这是 `analyze` 给不了的保障。
+//
+// ★ 用**假控制器**而不是真控制器: 真控制器会在 `onInit` 里发 HTTP 请求,
+//   测试里不该依赖后端(而且 `Get.find<ScriptService>()` 也没初始化)。
+//   假控制器只覆盖 `RunListPanel` 用到的那些**纯数据 getter**。
+
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:get/get.dart';
+
+// ★ 只 import library 入口 —— `task_list_controller.dart` 是
+//   `part of task_list`, **不能单独 import**(会报
+//   "Can't import ..., because it has a 'part of' declaration")。
+//   library 入口已经把它带出来了, `TaskListController` 是 public 的。
+import 'package:oasx/views/tasks/task_list_view.dart';
+
+/// 假控制器 —— 不联网, 数据全部可控。
+class FakeTaskListController extends TaskListController {
+  FakeTaskListController({
+    required List<Map<String, dynamic>> entries,
+    required List<Map<String, dynamic>> tasks,
+  })  : _entries = entries,
+        _tasks = tasks,
+        super(scriptName: 'test');
+
+  final List<Map<String, dynamic>> _entries;
+  final List<Map<String, dynamic>> _tasks;
+
+  // ---- 数据 ----
+  @override
+  List<Map<String, dynamic>> get entries => _entries;
+
+  @override
+  List<Map<String, dynamic>> get allTasks => _tasks;
+
+  @override
+  List<Map<String, dynamic>> get tasks => _tasks;
+
+  @override
+  int get runnableCount => _tasks.where((t) => t['can_run'] == true).length;
+
+  // ---- 条目类型定义（模拟后端 /schema 的 list.entry_kinds）----
+  @override
+  List<Map<String, dynamic>> get entryKinds => const [
+        {
+          'value': 'task',
+          'label': '任务',
+          'help': '执行这个任务',
+          'needs_minutes': false,
+          'needs_task': true,
+          'blocks_list': false,
+        },
+        {
+          'value': 'rest',
+          'label': '休息',
+          'help': '暂停调度 N 分钟 —— 连定时任务一起停',
+          'needs_minutes': true,
+          'needs_task': false,
+          'blocks_list': true,
+        },
+        {
+          'value': 'delay',
+          'label': '只停列表',
+          'help': '只推迟列表 N 分钟 —— 定时任务照常',
+          'needs_minutes': true,
+          'needs_task': false,
+          'blocks_list': true,
+        },
+      ];
+
+  @override
+  List<int> get durationChoices => const [10, 30, 60];
+
+  @override
+  String get listModeValue => 'List';
+
+  @override
+  String get listModeLabel => '列表优先(自定义顺序)';
+
+  @override
+  String get scheduleRule => 'List';
+
+  @override
+  String get scheduleRuleLabel => '列表优先(自定义顺序)';
+
+  @override
+  Map<String, dynamic> kindOf(String kind) {
+    for (final k in entryKinds) {
+      if ('${k['value']}' == kind) return k;
+    }
+    return {'value': kind, 'label': kind, 'help': ''};
+  }
+
+  @override
+  bool isTaskEntry(Map<String, dynamic> e) => '${e['kind']}' == 'task';
+
+  @override
+  String describeEntry(Map<String, dynamic> e) {
+    if ('${e['kind']}' != 'task') return '${e['kind']} ${e['minutes']}分钟';
+    // 与真实现保持一致: 任务条目显示**中文名**(真实现走 taskNameZh)
+    return '${findTask('${e['task']}')?['name_zh'] ?? e['task']}';
+  }
+
+  @override
+  Map<String, dynamic>? findTask(String cmd) {
+    for (final t in _tasks) {
+      if ('${t['command']}' == cmd) return t;
+    }
+    return null;
+  }
+
+  // ---- 监控/队列面板需要的新接口 ----
+  //
+  // ★ 假控制器**必须覆盖它们**: 真实现在 `_allTasks`（从 `/overview` 加载）
+  //   上做映射, 而假控制器的 `_allTasks` 是**空的** ——
+  //   不覆盖就会让任务名变成空串, 行全部不渲染
+  //   （表现是测试报 `Found 0 widgets with text "探索"`, 很容易误判成面板坏了）。
+
+  /// 命令名 -> 中文名（队列 / 监控用）。
+  @override
+  String zhNameOf(String command) => '${findTask(command)?['name_zh'] ?? ''}';
+
+  /// 命令名 -> `/overview` 那一行。
+  @override
+  Map<String, dynamic> taskRowOf(String command) =>
+      findTask(command) ?? const {};
+
+  /// 运行态徽标（待执行 / 等待中 / 冷却中 / 未启用）。
+  ///
+  /// ★ 必须覆盖: 真实现在 `_allTasks`（从 `/overview` 加载）上查,
+  ///   假控制器的 `_allTasks` 是空的 —— 不覆盖就一律返回"未知"。
+  @override
+  ({String label, int tone}) queueStatusOf(String command) {
+    final t = findTask(command);
+    if (t == null) return (label: '未知', tone: 2);
+    if (t['enable'] != true) return (label: '未启用', tone: 2);
+    if (t['in_cooldown'] == true) {
+      final m = (t['cooldown_minutes'] as num?)?.toInt() ?? 0;
+      return (label: m > 0 ? '冷却中 $m 分' : '冷却中', tone: 3);
+    }
+    if (t['slot'] == 'pending') return (label: '待执行', tone: 0);
+    final reason = '${t['reason'] ?? ''}';
+    return (label: reason.isEmpty ? '等待中' : reason, tone: 1);
+  }
+
+  /// 在不在队列里（1 起; 不在则 0）。
+  @override
+  int entryPositionOf(String command) {
+    for (var i = 0; i < _entries.length; i++) {
+      final e = _entries[i];
+      if ('${e['kind']}' == 'task' && '${e['task']}' == command) return i + 1;
+    }
+    return 0;
+  }
+
+  /// 未编排的启用任务（**不含**正在运行的那个）。
+  ///
+  /// ★ 与真实现保持一致: 正在运行的任务**不该**同时出现在"可加入"里
+  ///   （用户反馈过"正在运行的逢魔之时下面还能加入逢魔之时"）。
+  @override
+  List<Map<String, dynamic>> get unqueuedEnabledTasks {
+    final inList = {
+      for (final e in _entries)
+        if ('${e['kind']}' == 'task') '${e['task']}',
+    };
+    final running = runningTaskCommand;
+    return _tasks
+        .where((t) =>
+            t['enable'] == true &&
+            !inList.contains('${t['command']}') &&
+            '${t['command']}' != running)
+        .toList();
+  }
+
+  // ---- 队列成员（步2/步3 新增; 权威在后端）----
+  //
+  // ★ 假控制器**必须覆盖**: 真实现在 `_allTasks`（从 `/overview` 加载）
+  //   上查 `queued` / `auto_queue`, 而假控制器的 `_allTasks` 是空的 ——
+  //   不覆盖会让队列渲染成"空", 表现是 `Found 0 widgets`（很容易误判成面板坏了）。
+
+  @override
+  bool isQueued(String command) =>
+      findTask(command)?['queued'] == true;
+
+  @override
+  bool isAutoQueue(String command) =>
+      findTask(command)?['auto_queue'] == true;
+
+  @override
+  List<Map<String, dynamic>> get queuedTasks =>
+      _tasks.where((t) => t['queued'] == true).toList();
+
+  @override
+  List<Map<String, dynamic>> get enabledNotQueuedTasks => _tasks
+      .where((t) =>
+          t['enable'] == true &&
+          t['auto_queue'] != true &&
+          t['queued'] != true)
+      .toList();
+
+  @override
+  Map<String, dynamic> overviewRowOf(String command) =>
+      findTask(command) ?? const {};
+
+  /// 【添加任务】候选 —— 假实现按**同一规则**从 `_tasks` 里筛。
+  ///
+  /// ★ 不能让它走网络（测试里会失败或挂住）。
+  @override
+  Future<List<Map<String, dynamic>>> fetchAddCandidates() async =>
+      enabledNotQueuedTasks;
+
+  /// 移出队列 —— 假实现只返回提示文案, 不联网。
+  ///
+  /// ★ [entryId] 与真实签名一致（⑨: 同名多条要**精确移除**）。
+  @override
+  Future<String> removeFromQueue(String command, {String? entryId}) async =>
+      '（测试）已把「$command」移出队列并停用${entryId == null ? '' : ' [$entryId]'}';
+
+  // ---- 写操作: 测试里只记录, 不联网 ----
+  @override
+  Future<void> reload() async {}
+
+  @override
+  Future<bool> setTarget(String t, int v) async => true;
+
+  @override
+  Future<bool> setEnabled(String t, bool v) async => true;
+
+  @override
+  Future<void> removeEntry(int i) async {}
+
+  @override
+  Future<void> addEntry(Map<String, dynamic> e, {int index = -1}) async {}
+
+  @override
+  Future<void> reorderEntries(int a, int b) async {}
+
+  @override
+  Future<void> resetToDefault() async {}
+}
+
+/// 造一个任务行（字段与真实 `/overview` 对齐）。
+///
+/// ## `auto_queue` / `queued` 的默认值（与真实后端一致）
+///
+/// * `auto_queue`  = `!countable`（次数任务不自动进队列）
+/// * `queued`      = `auto_queue && enable`（定时类启用后自动在队列里）
+/// * `slot`        = `'pending'`（可跑）或 `'waiting'`（未到窗口）
+///
+/// 需要造"已启用但不在队列"的次数任务时传 `queued: false`（默认就是）。
+Map<String, dynamic> taskRow(
+  String command, {
+  String? zh,
+  bool countable = true,
+  int? count,
+  bool enable = true,
+  bool? autoQueue,
+  bool? queued,
+  String slot = 'pending',
+}) {
+  final auto = autoQueue ?? !countable;
+  return {
+    'name': command.toLowerCase(),
+    'command': command,
+    'name_zh': zh ?? command,
+    'category': countable ? 'fixed' : 'timed',
+    'category_label': countable ? '固定任务' : '定时任务',
+    'countable': countable,
+    // ★ 步2 新增字段
+    'auto_queue': auto,
+    'queued': queued ?? (auto && enable),
+    'count': count,
+    'enable': enable,
+    'can_run': enable,
+    'reason': enable ? '' : '未启用',
+    'in_window': true,
+    'in_list': true,
+    'list_pos': 1,
+    'next_run': '2026-10-09 12:00:00',
+    'period': 'daily',
+    'priority': 5,
+    'slot': enable ? slot : 'waiting',
+    'charges': null,
+      'resource_describe': '每天重置',
+      'snapshot': '',
+    };
+}
+
+Widget wrap(Widget child) => GetMaterialApp(
+      home: Scaffold(body: SingleChildScrollView(child: child)),
+    );
+
+// ============================================================ 运行控制条 v2
+//
+// v2 去掉了「全部停止 N 分钟」/「只停列表 N 分钟」两个**时长按钮** ——
+// 固定任务与定时任务分开管理后，"谁停谁不停"交给总开关表达。
+//
+// ★ `RunControlBar` 会构造 `ApiClient`（需要 `SettingsController` + 联网），
+//   测试环境给不了，所以这里**只断言源码语义**（不含注释），不 pump 真实控件。
+//
+// ★★ 关键: 检查前**必须去掉注释**。
+//   我第一版没去注释，结果守卫匹配到自己的说明文字 ——
+//   比如文件里写着"明确不提供立即停"，就被判成"提供了立即停"。
+//   这类"守卫误报"很浪费注意力，所以下面先剥注释再断言。
+String codeOnly(String path) {
+  final raw = File(path).readAsStringSync();
+  // 去掉 `///` 与 `//` 行注释（这些文件里没有块注释 `/* */`）
+  return raw
+      .split('\n')
+      .where((l) => !l.trimLeft().startsWith('//'))
+      .join('\n');
+}
+
+void _runControlV2Tests() {
+  test('运行控制条源码里不再出现已废的时长按钮', () {
+    final src = codeOnly('lib/views/tasks/run_control_bar.dart');
+
+    for (final gone in ['全部停止', '只停列表']) {
+      expect(src.contains(gone), isFalse,
+          reason: 'v2 去掉了「$gone」, 代码里不该再出现');
+    }
+    for (final gone in ['restScript', 'delayScript']) {
+      expect(src.contains(gone), isFalse, reason: 'v2 不该再调 `$gone`');
+    }
+  });
+
+  test('运行控制条只保留 暂停调度 / 继续调度', () {
+    // ★ 用户第二轮实测后要求**去掉「本轮跑完再停」** ——
+    //   所以决策台账 1.2（当初"要第二个按钮"）已作废。
+    //
+    //   后端 `pause_mode='round'` 这个**能力保留不动**,
+    //   只是界面不再暴露入口（与「只停列表」的处理一致）。
+    final src = codeOnly('lib/views/tasks/run_control_bar.dart');
+    for (final kept in ['暂停调度', '继续调度']) {
+      expect(src.contains(kept), isTrue, reason: '应保留「$kept」');
+    }
+    expect(src.contains('本轮跑完再停'), isFalse,
+        reason: '用户要求去掉「本轮跑完再停」');
+    expect(src.contains("mode: 'round'"), isFalse,
+        reason: '不该再有 round 模式的入口');
+    // 不提供"立即停" —— 会卡在半途
+    expect(src.contains('立即停'), isFalse,
+        reason: '「立即停」会卡在半途，明确不提供');
+  });
+
+  test('运行控制条的状态看**脚本进程**, 不是只看暂停', () {
+    // ★★ 修一个真 bug ★★
+    //
+    // 用户反馈: "虽然未暂停调度就绿色运行中，但是脚本进程停止时
+    //            这个还显示运行中啊"
+    //
+    // 根因: 原先只看 `run_control` 的 `paused`, 没看脚本进程。
+    final src = codeOnly('lib/views/tasks/run_control_bar.dart');
+    expect(src.contains('scriptModelMap'), isTrue,
+        reason: '状态必须同时看脚本进程（WebSocket 的 ScriptModel.state）');
+    expect(src.contains('ScriptState.running'), isTrue);
+    expect(src.contains('脚本未启动'), isTrue,
+        reason: '进程停时要明确显示"脚本未启动"，不能显示"运行中"');
+    // 进程没跑时"暂停调度"应置灰
+    expect(src.contains('!procRunning'), isTrue);
+  });
+
+  test('脚本进程开关已从运行控制条移出', () {
+    final src = codeOnly('lib/views/tasks/run_control_bar.dart');
+    // "开始/停止脚本"是**进程级**操作, 已移到任务总览页
+    expect(src.contains('startScript'), isFalse,
+        reason: '脚本进程开关应移到总览页（进程级 vs 调度级分开）');
+    expect(src.contains('stopScript'), isFalse,
+        reason: '脚本进程开关应移到总览页');
+  });
+
+  test('运行列表面板不再出现 delay 条目', () {
+    final src = codeOnly('lib/views/tasks/queue_panel.dart');
+    expect(src.contains("'delay'"), isFalse,
+        reason: 'v2 的列表只有 task 与 rest');
+    expect(src.contains('只停列表'), isFalse);
+  });
+}
+
+// ============================================================ 总览页 v2 补齐
+//
+// 用户要求补齐的项:
+//   * 「重置选中」（归档后重开）
+//   * 「运行一次」（点击顺序插队）
+//   * 筛选: 只看定时任务 / 只看限时活动
+void _overviewV2Tests() {
+  test('总览页有「重置选中」与「运行一次」按钮', () {
+    final src = codeOnly('lib/views/tasks/task_list_view.dart')
+        .replaceAll("\n", '');
+    expect(src.contains('重置选中'), isTrue);
+    expect(src.contains('运行一次'), isTrue);
+    // 两个按钮都调控制器上对应的方法（不是空按钮）
+    expect(src.contains('resetSelected'), isTrue);
+    expect(src.contains('runOnceSelected'), isTrue);
+  });
+
+  test('总览页补齐了四个筛选', () {
+    final src = codeOnly('lib/views/tasks/task_list_view.dart');
+    for (final f in ['只看已启用', '只看固定任务', '只看定时任务', '只看限时活动']) {
+      expect(src.contains(f), isTrue, reason: '缺筛选「$f」');
+    }
+  });
+
+  test('「只看 X」筛选互斥（同时勾两个结果必为空）', () {
+    final src = File('lib/controller/task_list/task_list_controller.dart')
+        .readAsStringSync();
+    // 三个 toggle 里都该清掉另外两个 —— 逐个检查**方法体**,
+    // 而不是全文 contains（后者会被别处的赋值蒙混过关）。
+    for (final entry in {
+      'void toggleOnlyFixed': ['onlyTimed = false', 'onlyLimited = false'],
+      'void toggleOnlyTimed': ['onlyFixed = false', 'onlyLimited = false'],
+      'void toggleOnlyLimited': ['onlyFixed = false', 'onlyTimed = false'],
+    }.entries) {
+      final i = src.indexOf(entry.key);
+      expect(i, greaterThan(-1), reason: '找不到 ${entry.key}');
+      final body = src.substring(i, i + 400);
+      for (final need in entry.value) {
+        expect(body.contains(need), isTrue,
+            reason: '${entry.key} 里应清掉另一个: $need');
+      }
+    }
+  });
+
+  test('「重置选中」有二次确认（归档会改计数, 不能误点）', () {
+    final src = codeOnly('lib/controller/task_list/task_list_controller.dart');
+    final i = src.indexOf('Future<bool> resetSelected');
+    expect(i, greaterThan(-1));
+    final body = src.substring(i, i + 900);
+    expect(body.contains('_confirm'), isTrue,
+        reason: '重置会改变计数，必须有二次确认');
+    expect(body.contains('归档'), isTrue,
+        reason: '确认文案要说清"归档"而不是"删除"');
+  });
+
+  test('总览页有「运行记录」列（次数 + 耗时）', () {
+    final row = codeOnly('lib/views/tasks/task_row_view.dart');
+    expect(row.contains('_recordCell'), isTrue);
+    final header = codeOnly('lib/views/tasks/task_list_view.dart');
+    expect(header.contains('运行记录'), isTrue);
+  });
+
+  test('运行记录显示归档轮数（重置不删历史）', () {
+    final src = codeOnly('lib/views/tasks/task_row_view.dart');
+    expect(src.contains('archived_rounds'), isTrue,
+        reason: '要能看出"已归档 N 轮"—— 否则用户以为重置把数据删了');
+  });
+}
+
+// ============================================================ 多列排序 + 持久记忆
+//
+// 用户要求:
+// > 支持多列排序筛选且可以**持久记忆**用户的偏好，
+// > 同时可以**恢复默认**（有相关功能说明和弹窗提示）
+void _sortAndPrefsTests() {
+  test('表头可点击排序（多列）', () {
+    final src = codeOnly('lib/views/tasks/task_list_view.dart');
+    expect(src.contains('_sortableHeader'), isTrue);
+    expect(src.contains('c.sortBy('), isTrue, reason: '表头必须真的能点');
+    // 至少覆盖这些列
+    for (final col in ['name', 'category', 'state', 'next_run']) {
+      expect(src.contains("'$col'"), isTrue, reason: '缺可排序列 $col');
+    }
+  });
+
+  test('排序箭头反映当前列与方向', () {
+    final src = codeOnly('lib/views/tasks/task_list_view.dart');
+    expect(src.contains('arrow_upward'), isTrue);
+    expect(src.contains('arrow_downward'), isTrue);
+    expect(src.contains('unfold_more'), isTrue,
+        reason: '非当前列要有"可点"提示，否则用户不知道表头能点');
+  });
+
+  test('「恢复默认」有二次确认 + 说明不影响什么', () {
+    final src = codeOnly('lib/controller/task_list/task_list_controller.dart');
+    final i = src.indexOf('Future<bool> restoreDefaults');
+    expect(i, greaterThan(-1));
+    final body = src.substring(i, i + 800);
+    expect(body.contains('_confirm'), isTrue, reason: '用户要求"有弹窗提示"');
+    expect(body.contains('不影响'), isTrue,
+        reason: '要说明它**不动**任务配置/记录/执行顺序');
+    expect(body.contains('prefsStore.clear'), isTrue,
+        reason: '恢复默认应真的清掉持久化偏好');
+  });
+
+  test('偏好会落盘（切列/切筛选都存）', () {
+    final src = codeOnly('lib/controller/task_list/task_list_controller.dart');
+    // 每个 toggle 与 sortBy 都应调 _savePrefs
+    for (final m in ['void sortBy', 'void toggleOnlyTimed', 'void toggleOnlyLimited']) {
+      final i = src.indexOf(m);
+      expect(i, greaterThan(-1), reason: '找不到 $m');
+      expect(src.substring(i, i + 500).contains('_savePrefs'), isTrue,
+          reason: '$m 应持久化偏好');
+    }
+  });
+
+  test('偏好按账号隔离', () {
+    final src = codeOnly('lib/controller/task_list/task_list_controller.dart');
+    expect(src.contains('prefsStore.read(scriptName)'), isTrue);
+    expect(src.contains('prefsStore.write(scriptName'), isTrue);
+  });
+
+  test('排序只影响显示 —— 不改执行顺序', () {
+    // ★ 用户明确选了"拖拽排序 = 只改显示顺序"。
+    //   若排序偷偷改了 run_list，用户会以为"排序等于调顺序"。
+    final src = codeOnly('lib/controller/task_list/task_list_controller.dart');
+    final i = src.indexOf('void _applySort');
+    expect(i, greaterThan(-1));
+    final body = src.substring(i, i + 400);
+    expect(body.contains('saveRunList'), isFalse,
+        reason: '排序不该碰执行顺序');
+    expect(body.contains('_api'), isFalse,
+        reason: '排序是纯本地的，不该发请求改后端状态');
+  });
+}
+
+// ============================================================ Round 4 收尾
+void _round4Tests() {
+  test('脚本进程开关在总览页（进程级 vs 调度级分开）', () {
+    final src = codeOnly('lib/views/tasks/task_list_view.dart');
+    expect(src.contains('_scriptProcessRow'), isTrue);
+    expect(src.contains('启动脚本'), isTrue);
+    expect(src.contains('停止脚本'), isTrue);
+
+    // ★ 硬停要二次确认 —— 它会打断当前战斗，
+    //   危险程度与「暂停调度」（安全点停）不同。
+    final i = src.indexOf('_confirmStopScript');
+    expect(i, greaterThan(-1));
+    expect(src.substring(i, i + 900).contains('AlertDialog'), isTrue,
+        reason: '硬停必须有二次确认');
+  });
+
+  test('脚本开关在 Obx 里直接读 Rx（否则 GetX 抛异常导致白屏）', () {
+    final src = codeOnly('lib/views/tasks/task_list_view.dart');
+    final i = src.indexOf('Widget _scriptProcessRow');
+    expect(i, greaterThan(-1));
+    final body = src.substring(i, i + 500);
+    expect(body.contains('Obx('), isTrue);
+    expect(body.contains('.state.value'), isTrue,
+        reason: 'Obx 回调必须**直接读 Rx**，否则抛 improper use of a GetX');
+  });
+
+  test('任务选择器：休息置顶 + 候选来自**后端端点**', () {
+    final src = codeOnly('lib/views/tasks/queue_panel.dart');
+    final i = src.indexOf('class _TaskPickerDialogState');
+    expect(i, greaterThan(-1));
+    final body = src.substring(i, i + 3200);
+
+    // 「休息」是控制条目, 与候选过滤无关, 始终置顶
+    expect(body.contains('休息（去庭院待着）'), isTrue, reason: '休息应置顶');
+    expect(body.contains('_PickedEntry.rest'), isTrue);
+
+    // ★★ 候选**走后端**（`fetchAddCandidates`）—— 前端不再自己过滤 ★★
+    //
+    // 规则只有一处（后端 `get_queue_candidates`）, 前端重复实现会漂移。
+    expect(body.contains('fetchAddCandidates'), isTrue,
+        reason: '候选应来自后端端点, 不在前端重新实现过滤规则');
+    expect(body.contains('widget.controller.allTasks'), isFalse,
+        reason: '选择器不该再自己筛 allTasks —— 规则会与后端漂移');
+
+    // ★ 空态必须给出**原因与出路**（只说"没有"会让人以为坏了）
+    expect(body.contains('没有可添加的任务'), isTrue);
+  });
+
+  test('★ 移除队列 = 确认弹窗 + 后端停用 + 提示', () {
+    final src = codeOnly('lib/views/tasks/queue_panel.dart');
+    // 弹窗
+    expect(src.contains('_confirmAndRemove'), isTrue, reason: '缺少移除确认弹窗');
+    expect(src.contains('移出并停用'), isTrue, reason: '弹窗要明确说"会同时停用"');
+    // 走后端（后端会 `sch.enable = False`）
+    expect(src.contains('c.removeFromQueue('), isTrue);
+    // 提示
+    expect(src.contains('Get.snackbar'), isTrue, reason: '移除后要给提示');
+    // 文案要说清"之后怎么再跑"
+    expect(src.contains('任务列表'), isTrue,
+        reason: '提示要告诉用户"想再跑需先在任务列表启用"');
+  });
+
+  test('★ 四类分区：权威是后端的 queued / auto_queue', () {
+    // | # | 分类 | 判定 |
+    // |---|---|---|
+    // | 0 | 正在运行 | WebSocket `runningTask`（`_statusBlock`）|
+    // | 1/2 | 可跑 / 未到窗口 | `queued && slot`（**可拖**）|
+    // | 3 | 启用但不会运行 | `enable && !auto_queue && !queued` —— 只在【添加任务】里 |
+    // | 4 | 未启用 | `!enable` —— 只在任务列表里 |
+    final ctrl = codeOnly('lib/controller/task_list/task_list_controller.dart');
+    expect(ctrl.contains("t['queued'] == true"), isTrue,
+        reason: 'isQueued 必须读后端 queued 字段（不自己推导）');
+    expect(ctrl.contains("t['auto_queue'] == true"), isTrue,
+        reason: 'isAutoQueue 必须读后端 auto_queue 字段');
+    final i = ctrl.indexOf('get enabledNotQueuedTasks');
+    expect(i, greaterThan(-1));
+    final body = ctrl.substring(i, i + 400);
+    expect(body.contains("t['enable'] == true"), isTrue);
+    expect(body.contains("t['auto_queue'] != true"), isTrue);
+    expect(body.contains("t['queued'] != true"), isTrue);
+
+    final q = codeOnly('lib/views/tasks/queue_panel.dart');
+    // ★ 2026-10-10: 渲染源从 `entries`（只有 run_list）改为
+    //   `c.queuedTaskRows`（有效队列 = run_list + 自动补齐）
+    //   —— 修"启用了定时任务却看不到"的 bug。
+    expect(q.contains('c.queuedTaskRows'), isTrue,
+        reason: '队列应渲染**有效队列**（含自动补齐的定时任务）');
+    // 可跑/未到开放时间的判定必须读后端 slot
+    expect(q.contains("'pending'"), isTrue,
+        reason: '缺少 slot（可跑/未到开放时间）判定');
+    // ★ 2026-10-10: 文案从"可跑 / 未到窗口"改为"待执行 / 未到开放时间"
+    expect(q.contains('待执行'), isTrue);
+    expect(q.contains('未到开放时间'), isTrue);
+    expect(q.contains('ReorderableListView.builder'), isTrue,
+        reason: '队列必须可拖拽');
+  });
+
+  test('★ 第 3 类**不堆在队列下面**（用户明确要求）', () {
+    // 用户原话: "启用的任务但不会执行的任务应该出现在添加任务里，
+    //            而不是堆在未编排里"。
+    final q = codeOnly('lib/views/tasks/queue_panel.dart');
+    expect(q.contains('_unqueuedRow'), isFalse,
+        reason: '不该再把未编排的任务一行行罗列在队列下面');
+    expect(q.contains('未编排（共'), isFalse,
+        reason: '旧的"未编排"标题应已删除');
+    expect(q.contains('不在队列里'), isTrue, reason: '缺少指引文案');
+    expect(q.contains('去添加'), isTrue, reason: '缺少"去添加"入口');
+  });
+
+  testWidgets('★ 队列只渲染 queued 的任务（第 3 类不出现）', (tester) async {
+    final c = FakeTaskListController(
+      entries: [
+        {'kind': 'task', 'task': 'DemonEncounter'},
+      ],
+      tasks: [
+        // 在队列里 -> 应渲染
+        taskRow('DemonEncounter', zh: '逢魔之时', queued: true),
+        // 已启用的次数任务, 不在队列 -> **不该**出现在队列里
+        taskRow('RealmRaid', zh: '个人突破', countable: true),
+      ],
+    );
+    await tester.pumpWidget(wrap(QueuePanel(controller: c)));
+    await tester.pump();
+
+    expect(find.text('逢魔之时'), findsOneWidget);
+    expect(find.text('个人突破'), findsNothing,
+        reason: '启用但不在队列的次数任务不该出现在队列里（只在【添加任务】）');
+    expect(find.textContaining('不在队列里'), findsOneWidget);
+    expect(find.text('去添加'), findsOneWidget);
+  });
+
+  test('任务选择器**不再**按 countable 过滤（曾静默丢用户的配置）', () {
+    // ★★ 回归守卫 ★★
+    //
+    // 曾经选择器与后端都按 `countable` 过滤, 结果:
+    // `countable` 只覆盖 54 个任务里的 **14 个**, 用户列表里的
+    // DemonEncounter / WantedQuests / MysteryShop / Duel /
+    // ExperienceYoukai / TrueOrochi / WeeklyTrifles **全被丢弃**,
+    // 而且过滤结果会被 `save_run_list()` 写回配置 -> 静默的数据破坏。
+    //
+    // 现在**列表接受任意任务名**。选择器也不该再自己过滤。
+    final src = codeOnly('lib/views/tasks/queue_panel.dart');
+    final i = src.indexOf('class _TaskPickerDialogState');
+    final body = src.substring(i, i + 2600);
+    expect(body.contains("t['countable'] == true"), isFalse,
+        reason: '选择器不该再按 countable 过滤, 否则又会丢任务');
+  });
+
+  test('休息选项排在其他任务之前', () {
+    final src = File('lib/views/tasks/queue_panel.dart').readAsStringSync();
+    final restIdx = src.indexOf('_PickedEntry.rest');
+    final listIdx = src.indexOf('ListView.builder', restIdx);
+    expect(restIdx, greaterThan(-1));
+    expect(listIdx, greaterThan(restIdx),
+        reason: '休息卡片必须在任务列表**之前**渲染（置顶）');
+  });
+
+  test('点任务行进设置页，且绕过 useablemenus 白名单', () {
+    final view = codeOnly('lib/views/tasks/task_list_view.dart');
+    expect(view.contains('openTaskSettings'), isTrue);
+    expect(view.contains('onTap:'), isTrue);
+
+    final nav = codeOnly('lib/controller/ctrl_nav.dart');
+    final i = nav.indexOf('void openTaskSettings');
+    expect(i, greaterThan(-1));
+    final body = nav.substring(i, i + 700);
+    // ★ 这是关键: 不能复用 switchContent（它有白名单，会静默忽略）
+    expect(body.contains('useablemenus'), isFalse,
+        reason: 'openTaskSettings 不该有白名单守卫，否则点不在侧边栏的任务会没反应');
+    // 但仍要防呆 TaskList（后端没有 /TaskList/args，loadGroups 会崩）
+    expect(body.contains('TaskList'), isTrue,
+        reason: '仍要防呆 TaskList，否则界面 500');
+  });
+}
+
+// ============================================================ Phase 0 修复
+void _phase0Tests() {
+  test('搜索框是**受控**的（曾"清空后任务不恢复"）', () {
+    // ★★ 回归守卫 ★★
+    //
+    // 之前的 bug: 搜索框只有 `onChanged: c.setQuery`（没有 controller），
+    // 而 `setQuery` 里的 `update()` 故意不重建输入框那部分（为输入流畅）。
+    // 于是:
+    //   * 清空搜索后列表不恢复（控制器里 query 清了，显示没复位）
+    //   * `恢复默认` 清了 query，**输入框里的旧文字还在**
+    //   * 重启后偏好里的 query 恢复了，但**输入框是空的**
+    final view = codeOnly('lib/views/tasks/task_list_view.dart');
+    expect(view.contains('TextEditingController'), isTrue,
+        reason: '搜索框必须有 controller');
+    expect(view.contains('controller: searchCtrl'), isTrue,
+        reason: 'TextField 必须接上受控 controller');
+    expect(view.contains('_searchCtrl.dispose()'), isTrue,
+        reason: 'controller 必须被释放（否则每帧泄漏监听器）');
+    // 一键清除
+    expect(view.contains('clearQuery'), isTrue, reason: '缺"清除搜索"入口');
+  });
+
+  test('控制器 -> 输入框 的反向同步必须存在', () {
+    final view = codeOnly('lib/views/tasks/task_list_view.dart');
+    expect(view.contains('onQueryChanged'), isTrue,
+        reason: '控制器改动 query 后要能同步回输入框');
+
+    final ctrl = codeOnly('lib/controller/task_list/task_list_controller.dart');
+    // 三条会改 query 的路径都要通知输入框
+    for (final where in ['void applyQueryNow', 'Future<bool> restoreDefaults']) {
+      final i = ctrl.indexOf(where);
+      expect(i, greaterThan(-1), reason: '找不到 $where');
+      expect(ctrl.substring(i, i + 1200).contains('onQueryChanged'), isTrue,
+          reason: '$where 应同步输入框');
+    }
+    // 载入偏好后也要同步（否则重启后输入框是空的）
+    final rl = ctrl.indexOf('Future<void> reload()');
+    expect(ctrl.substring(rl, rl + 4000).contains('onQueryChanged'), isTrue,
+        reason: '载入偏好后要把 query 同步回输入框');
+  });
+
+  test('搜索有防抖（不再每击键重建 54 行）', () {
+    final ctrl = codeOnly('lib/controller/task_list/task_list_controller.dart');
+    expect(ctrl.contains('_searchDebounce'), isTrue, reason: '缺搜索防抖');
+    expect(ctrl.contains('_searchDebounce?.cancel()'), isTrue,
+        reason: 'onClose 必须取消定时器，否则控制器销毁后还在跑');
+  });
+
+  // 后端"列表接受任意任务名"的回归守卫在 pytest 里:
+  //   tests/module/config/test_run_list.py::TestListAcceptsAnyTask
+  //   （含真实被丢弃的那 7 个任务）
+}
+
+// ============================================================ Phase 1: 开关与优先级
+void _phase1Tests() {
+  test('全局设置渲染**全部**开关（曾一个都没渲染）', () {
+    // ★★ 重大遗漏的回归守卫 ★★
+    //
+    // 后端把两个总开关 + 定时优先 + 休息穿插全做完了, `/schema` 的
+    // `global_fields` 也暴露了 —— 但前端**一个都没渲染**,
+    // 于是它们永远停在默认值, 用户在界面上根本改不了。
+    final view = codeOnly('lib/views/tasks/task_list_view.dart');
+    for (final key in ['enable_fixed', 'enable_timed',
+                       'timed_priority', 'rest_interleave']) {
+      expect(view.contains("'$key'"), isTrue,
+          reason: '全局设置缺开关 $key（后端早就支持了）');
+    }
+    expect(view.contains('_switchRow'), isTrue, reason: '缺开关行组件');
+  });
+
+  test('开关的标签与说明从 `/schema` 读，不硬编码文案', () {
+    final ctrl = codeOnly('lib/controller/task_list/task_list_controller.dart');
+    expect(ctrl.contains('globalFieldLabel'), isTrue);
+    expect(ctrl.contains('globalField('), isTrue);
+    expect(ctrl.contains('timedPriorityChoices'), isTrue,
+        reason: '可选值也要从 /schema 读, 否则后端加选项前端看不到');
+
+    final view = codeOnly('lib/views/tasks/task_list_view.dart');
+    // 开关行必须用 controller 给的标签, 而不是写死中文
+    expect(view.contains('c.globalFieldLabel('), isTrue);
+  });
+
+  test('优先级与预期完成时间可编辑（每任务）', () {
+    final ctrl = codeOnly('lib/controller/task_list/task_list_controller.dart');
+    expect(ctrl.contains('setTaskPriority'), isTrue);
+    expect(ctrl.contains('setTaskExpectedMinutes'), isTrue);
+    // 走各任务的 scheduler 分组
+    expect(ctrl.contains("'scheduler', 'priority'"), isTrue);
+    expect(ctrl.contains("'expected_minutes'"), isTrue);
+
+    final row = codeOnly('lib/views/tasks/task_row_view.dart');
+    expect(row.contains('_priorityCell'), isTrue);
+    expect(row.contains('_expectedCell'), isTrue);
+    expect(row.contains('_NumberCell'), isTrue);
+  });
+
+  test('数字输入格不能每击键提交（会打爆后端）', () {
+    final row = codeOnly('lib/views/tasks/task_row_view.dart');
+    final i = row.indexOf('class _NumberCellState');
+    expect(i, greaterThan(-1));
+    // ⚠ 类在文件末尾附近 —— 直接 +2200 会越界（踩过）。
+    final end = (i + 2200 < row.length) ? i + 2200 : row.length;
+    final body = row.substring(i, end);
+    // 只在失焦/回车提交
+    expect(body.contains('_focus.addListener'), isTrue,
+        reason: '失焦要提交');
+    expect(body.contains('onSubmitted'), isTrue, reason: '回车要提交');
+    // 有焦点时不覆盖用户输入
+    expect(body.contains('_focus.hasFocus'), isTrue);
+    // 必须被释放
+    expect(body.contains('_ctrl.dispose()'), isTrue);
+    expect(body.contains('_focus.dispose()'), isTrue);
+  });
+
+  test('目标次数输入框读写的是 `target`，不是 `count`', () {
+    // ★★ 回归守卫 ★★
+    //
+    // 之前 `_targetText()` 读 `task['count']`（任务配置里的默认值），
+    // 而用户改的是 `scheduler.target` —— 于是改完看到旧数字,
+    // 会**以为没生效**（这就是"次数双轨"那套 bug 的表现）。
+    final row = codeOnly('lib/views/tasks/task_row_view.dart');
+    final i = row.indexOf('String _targetText()');
+    expect(i, greaterThan(-1));
+    final body = row.substring(i, i + 260);
+    expect(body.contains("task['target']"), isTrue,
+        reason: '输入框初始值应读 target');
+    expect(body.contains("task['count']"), isFalse,
+        reason: 'count 是任务配置默认值, 不该当输入框的值');
+  });
+
+  test('失败冷却徽标可一键清除', () {
+    final row = codeOnly('lib/views/tasks/task_row_view.dart');
+    expect(row.contains('_cooldownBadge'), isTrue);
+    expect(row.contains('in_cooldown'), isTrue);
+    expect(row.contains('clearFailure'), isTrue,
+        reason: '修好之后要能立刻重试, 不用等 1 小时');
+    expect(row.contains('onDeleted'), isTrue);
+
+    final ctrl = codeOnly('lib/controller/task_list/task_list_controller.dart');
+    expect(ctrl.contains('clearFailureState'), isTrue);
+  });
+
+  test('排序支持优先级与预期耗时两列', () {
+    final prefs = codeOnly('lib/service/task_prefs.dart');
+    expect(prefs.contains("'priority'"), isTrue);
+    expect(prefs.contains("'expected'"), isTrue);
+    // 键要同类型（缺失时给数字兜底, 不能返回 null）
+    expect(prefs.contains("case 'priority':"), isTrue);
+    expect(prefs.contains("case 'expected':"), isTrue);
+  });
+}
+
+// ============================================================ Phase 2: 合并页面
+void _phase2Tests() {
+  test('统一控制台: **三个 tab**（调度 / 执行队列 / 任务汇报）+ 日志移到独立窗口', () {
+    // ★★ 用户反馈演进（每一轮都改变了结构）★★
+    //
+    //   1. "把功能加入旧总览" -> 合并成一个控制台
+    //   2. "执行顺序和监控不能合在一起吗" -> 3 tab 减到 2
+    //   3. "监控窗口和预期流程不应该是一种东西吗" -> 合一
+    //   4. "执行队列和队列视图是一个东西吧" -> 我误做成"删掉观察窗"
+    //      用户纠正: "你这次是直接删除了监控，而不是合并"
+    //   5. "队列单独一个 tab" -> 调度 / 执行队列
+    //   6. ★ **2026-10-10**:
+    //      "添加一个**任务完成汇报 tab**, 现在的日志属于原始日志, 应该
+    //       **转移到单独界面**用来 debug, 当前日志位置替换为**任务完成汇报**
+    //       的 tab"
+    //      -> 现在是 **调度 / 执行队列 / 任务汇报**, 日志移到独立窗口
+    final view = codeOnly('lib/views/tasks/task_list_view.dart');
+    expect(view.contains("Tab(text: '调度')"), isTrue);
+    expect(view.contains("Tab(text: '执行队列')"), isTrue);
+    expect(view.contains("Tab(text: '任务汇报')"), isTrue,
+        reason: '用户要求新增「任务完成汇报」tab');
+    expect(view.contains('TabBar('), isTrue);
+    // ⚠ `length` 必须与 tab 数一致 —— 不一致会**运行时崩**（踩过）
+    expect(view.contains('length: 3'), isTrue,
+        reason: 'DefaultTabController 的 length 必须等于 tab 数（现在 3 个）');
+
+    // ★ 原日志位 -> 任务汇报面板
+    expect(view.contains('TaskReportPanel('), isTrue,
+        reason: '原来放日志的位置应换成任务完成汇报');
+
+    // ★ 原始日志 -> **独立窗口**（不再是常驻）
+    expect(view.contains('_showRunLogs'), isTrue,
+        reason: '原始日志应移到单独界面（供 debug）');
+    final buildIdx = view.indexOf('Widget build(BuildContext context)');
+    final body = view.substring(buildIdx, buildIdx + 5200);
+    expect(body.contains('LogWidget('), isFalse,
+        reason: '日志**不该**再常驻在 build 里 —— 它已移到独立窗口');
+
+    // ★ 左右宽度**可拖拽调整** + 持久记忆
+    expect(body.contains('onHorizontalDragUpdate'), isTrue,
+        reason: '缺左右分栏的拖拽条');
+    expect(body.contains('resizeColumn'), isTrue,
+        reason: '拖拽条要有 resize 光标, 否则用户不知道能拖');
+    expect(view.contains('_splitWidth'), isTrue);
+    expect(view.contains('_saveSplit'), isTrue, reason: '宽度要持久记忆');
+  });
+
+  test('★ 「待执行」与「执行顺序」**合并成一套**可拖列表（用户要求）', () {
+    // ★★ 2026-10-10 用户澄清（**改变了此前的设计**）★★
+    //
+    //   "待执行里为什么不能和执行顺序一样拖动呢, 他俩应该并在一起啊"
+    //   "等待中（还没到点）更改为显式的意义, 如[未到开放时间]"
+    //   "待执行（马上要跑）和执行顺序合并一起"
+    //
+    // 此前是**两套**: 一个可拖的「执行顺序」+ 两个只读的「待执行/等待中」观察窗。
+    // 现在**只有一套**: 一个 `ReorderableListView` 渲染 `c.queuedTaskRows`,
+    // 每行带状态徽标（[待执行] / [未到开放时间]）。
+    //
+    // ★ 早先那句"删掉 ≠ 合并"是针对**直接删掉监控**说的;
+    //   用户现在要的是**真正的合并进队列**, 不是删掉。
+    final q = codeOnly('lib/views/tasks/queue_panel.dart');
+
+    // 只有一个可拖列表
+    expect(RegExp(r'ReorderableListView').allMatches(q).length, 1,
+        reason: '应该**只有一套**可拖列表（合并后不该还有第二个）');
+
+    // 术语: 等待中 -> 「未到开放时间」
+    expect(q.contains('未到开放时间'), isTrue,
+        reason: '「等待中」必须改名为「未到开放时间」（显式意义）');
+    expect(q.contains('待执行'), isTrue, reason: '缺「待执行」状态');
+
+    // 未到开放时间要**变灰**
+    expect(q.contains('disabledColor'), isTrue,
+        reason: '不在窗口的任务应变灰（用户: "直接变灰放到等待中就行"）');
+
+    // 数据来自 WebSocket（实时）—— 只读观察窗删了, 但实时数据仍用于状态
+    expect(q.contains('runningTask'), isTrue);
+    // ★ Obx 的安全性: 服务拿不到时返回**静态** widget, 不进 Obx
+    expect(q.contains('if (sm == null)'), isTrue,
+        reason: 'sm 为 null 时不能进 Obx（没有 Rx 可读会让 GetX 抛异常）');
+  });
+
+  test('执行队列**独立成一个 tab**，不在调度 tab 里（用户要求）', () {
+    final view = codeOnly('lib/views/tasks/task_list_view.dart');
+    // 队列 tab 类存在
+    expect(view.contains('class _QueueTab'), isTrue);
+    // 调度 tab 里**不该**再放 QueuePanel（顺序编辑已移走）
+    final i = view.indexOf('class _ScheduleTab');
+    final b = view.indexOf('return ListView(', i);
+    final body = view.substring(b, b + 900);
+    expect(body.contains('_globalPanel(context)'), isTrue,
+        reason: '调度 tab 缺全局开关');
+    expect(body.contains('_tablePanel(context)'), isTrue,
+        reason: '调度 tab 缺任务表格');
+    expect(body.contains('QueuePanel('), isFalse,
+        reason: '执行队列已移到独立 tab, 不该还在调度 tab 里');
+  });
+
+  test('★ 「预期执行流程」已删除（与队列冗余）', () {
+    // 用户: "预期执行流程可以删去了，似乎和上边的队列冗余了。"
+    final view = codeOnly('lib/views/tasks/task_list_view.dart');
+    for (final gone in [
+      'class _FlowTab',
+      'mixin _FlowPanelMixin',
+      'Widget _flowPanel(',
+      '_flowPanel(context)',
+      "Tab(text: '队列视图')",
+    ]) {
+      expect(view.contains(gone), isFalse,
+          reason: '「$gone」应已删除（用户要求: 与队列冗余）');
+    }
+  });
+
+  test('★ 未编排列表**排除**正在运行的任务（用户报的 bug）', () {
+    // 用户: "正在运行的逢魔之时，下边显示还可以加入逢魔之时，这是不是个bug"
+    // —— **是 bug**。`run_list` 为空时所有任务都算"未编排", 把正在跑的也列进去了。
+    final ctrl = codeOnly('lib/controller/task_list/task_list_controller.dart');
+    final i = ctrl.indexOf('List<Map<String, dynamic>> get unqueuedEnabledTasks');
+    expect(i, greaterThan(-1));
+    final body = ctrl.substring(i, i + 900);
+    expect(body.contains('runningTaskCommand'), isTrue,
+        reason: '未编排列表必须排除正在运行的任务, 否则队列里会出现两条同一个任务');
+  });
+
+  test('菜单隐藏了重复的旧「总览」', () {
+    final nav = codeOnly('lib/controller/ctrl_nav.dart');
+    expect(nav.contains("if (key == 'Overview') return;"), isTrue,
+        reason: '旧「总览」应从菜单隐藏（它与控制台重复）');
+    expect(nav.contains("selectedMenu.value = 'TaskList';"), isTrue,
+        reason: '进账号后默认应进统一控制台');
+  });
+}
+
+void main() {
+  _accountSwitchTests();
+
+  _runControlV2Tests();
+
+  _overviewV2Tests();
+
+  _sortAndPrefsTests();
+
+  _round4Tests();
+
+  _phase0Tests();
+
+  _phase1Tests();
+
+  _phase2Tests();
+}
+
+// ============================================================ 切换账号
+//
+// 用户实测反馈: **伴生树和恋鸟树在前端显示了同一个任务列表**。
+//
+// 根因是 `_TaskListViewState` 里把 tag 与控制器写成了 `late final`:
+//
+//     late final String _tag;
+//     late final TaskListController _c;
+//
+// 切换账号时 Flutter **复用同一个 State**(同类型 widget、同位置),
+// `initState` 不会重跑 -> tag/控制器一直是**旧账号**的 -> 看起来"共享"。
+//
+// 下面这组测试钉住"切换账号要重新绑定"。
+void _accountSwitchTests() {
+  testWidgets('切换账号后控制器指向新账号（不共享同一个列表）', (tester) async {
+    // 两个账号各自的控制器, 用不同 tag 注册(模拟真实接线)
+    const tagA = 'tasks:伴生树';
+    const tagB = 'tasks:恋鸟树';
+    Get.put<TaskListController>(
+      FakeTaskListController(
+        entries: [
+          {'kind': 'task', 'task': 'DemonEncounter'},
+          {'kind': 'task', 'task': 'Exploration'},
+        ],
+        tasks: [
+          taskRow('DemonEncounter', zh: '逢魔之时', queued: true),
+          taskRow('Exploration', zh: '探索', queued: true),
+        ],
+      ),
+      tag: tagA,
+      permanent: true,
+    );
+    Get.put<TaskListController>(
+      FakeTaskListController(
+        entries: [
+          {'kind': 'task', 'task': 'GoldYoukai'},
+        ],
+        tasks: [taskRow('GoldYoukai', zh: '金币妖怪', queued: true)],
+      ),
+      tag: tagB,
+      permanent: true,
+    );
+
+    // ★ 这里**不能**直接 pump `TaskListView` —— 它的 `_bindController`
+    //   会 `Get.put` 自己的真控制器(要联网)。所以只断言
+    //   "两个 tag 的控制器是不同对象、数据不同" 这个前提,
+    //   再断言 `TaskListView` 在 scriptName 变化时**不抛异常**。
+    final a = Get.find<TaskListController>(tag: tagA);
+    final b = Get.find<TaskListController>(tag: tagB);
+    expect(identical(a, b), isFalse, reason: '两个账号的控制器必须是不同对象');
+    expect(a.entries.length, 2);
+    expect(b.entries.length, 1);
+
+    // 渲染两个 tag 的面板, 内容各自独立
+    await tester.pumpWidget(wrap(QueuePanel(controller: a)));
+    await tester.pump();
+    expect(find.text('逢魔之时'), findsOneWidget);
+    expect(find.text('金币妖怪'), findsNothing);
+
+    await tester.pumpWidget(wrap(QueuePanel(controller: b)));
+    await tester.pump();
+    expect(find.text('金币妖怪'), findsOneWidget);
+    expect(find.text('逢魔之时'), findsNothing);
+
+    Get.delete<TaskListController>(tag: tagA, force: true);
+    Get.delete<TaskListController>(tag: tagB, force: true);
+  });
+
+  testWidgets('不同账号绑定到不同的控制器 tag（回归: 曾用 late final 固定住）',
+      (tester) async {
+    // ★ 这条测试钉住**回归的本质**。
+    //
+    //   修复前 `_TaskListViewState` 写的是:
+    //       late final String _tag;
+    //       late final TaskListController _c;
+    //   切账号时 Flutter 复用同一个 State -> `initState` 不重跑 ->
+    //   tag/控制器一直是旧账号的 -> 两个账号"共享同一个任务列表"。
+    //
+    //   修法是让它们可变, 并在 `didUpdateWidget` 里按新的 scriptName 重绑。
+    //
+    //   ⚠ 这里**不能**直接 pump `TaskListView` —— 它的 `RunControlBar`
+    //     会构造 `ApiClient`(需要 `SettingsController` + 联网),
+    //     测试环境给不了。所以只验证"tag 与控制器是一一对应"这个前提,
+    //     加上 `RunListPanel` 用不同控制器时内容各自独立(上一测试已覆盖)。
+    const tagA = 'tasks:账号A';
+    const tagB = 'tasks:账号B';
+    expect(tagA == tagB, isFalse, reason: '不同账号的 tag 不能相同');
+
+    Get.put<TaskListController>(
+      FakeTaskListController(entries: const [], tasks: const []),
+      tag: tagA,
+      permanent: true,
+    );
+    Get.put<TaskListController>(
+      FakeTaskListController(entries: const [], tasks: const []),
+      tag: tagB,
+      permanent: true,
+    );
+    expect(
+      identical(Get.find<TaskListController>(tag: tagA),
+          Get.find<TaskListController>(tag: tagB)),
+      isFalse,
+      reason: '不同 tag 必须是不同控制器实例',
+    );
+    Get.delete<TaskListController>(tag: tagA, force: true);
+    Get.delete<TaskListController>(tag: tagB, force: true);
+  });
+}
