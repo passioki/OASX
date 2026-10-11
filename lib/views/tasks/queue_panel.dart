@@ -1282,18 +1282,41 @@ Widget _settingsRow(BuildContext context, TaskListController c, String cmd,
         //   所以这里不再暴露"优先级"输入框。
         // ⚠ 后端字段**暂时保留**（老配置兼容 + 任务列表页仍可按它排序）；
         //   彻底删字段是**独立一片**（见台账）。
-        // ★★★ 片 10 (F2e/④): **删掉「设置」入口**（用户裁定）★★★
+        // ★★ ④: **进该任务的设置页**（用户要求"**别的任务行上也应该有**"）★★
         //
-        // ## ★★ 用户原话 ★★
+        // ## ⚠⚠ 重要澄清（2026-10-11 用户纠正）⚠⚠
         //
-        // > "**④任务设置入口　删掉**（队列行已有设置）"
+        // 用户原话:
+        // > "④任务设置入口　**删掉**（队列行已有设置）"
         //
-        // ★ 理由：这一行**本来就能直接改**次数 / 预期耗时（见 `_settingsRow`）
-        //   ⇒ 再放一个"设置"按钮是**重复入口**，而且它跳的是**整个任务的
-        //   参数页**（与"队列里这一条"不是一回事），容易让人以为改的是"这一条"。
+        // ★ 我**理解错了** —— 以为是"删队列行的设置"。
+        //   用户的纠正:
+        // > "我说的应该是**正在运行行上的设置入口不需要**，
+        // >  而**不是队列行的设置删掉**！"
         //
-        // ★ 需要改任务参数时，走**任务列表页**那行（`TaskRowView` 本来就有
-        //   `onTap -> openTaskSettings`）。
+        // ⇒ 那个"要删掉的设置入口"在**旧「正在运行」整行**上 ——
+        //   而那一行**已经被整块删掉了**（片 5 / F2b）⇒ **本项早已完成**。
+        // ⇒ ★ **队列行的「设置」必须留着**（正是"别的任务行上也应该有"）。
+        //
+        // 实测: 调度 tab 的 `TaskRowView` 有 `onTap -> openTaskSettings`,
+        // 而队列行**没有** -> 用户看到"设置入口只在正在运行的任务行上"。
+        //
+        // ★ 用 `openTaskSettings` 而不是 `switchContent`: 后者有
+        //   `useablemenus` 白名单（只列侧边栏里有的任务）, 点不在侧边栏的
+        //   任务会被**静默忽略** -> "点了没反应"（踩过, 见 task_list_view）。
+        Tooltip(
+          message: '打开「${_zhName(cmd, c)}」的**任务设置**',
+          child: TextButton.icon(
+            icon: const Icon(Icons.tune, size: 15),
+            label: const Text('设置'),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              minimumSize: const Size(0, 28),
+            ),
+            onPressed: () => Get.find<NavCtrl>().openTaskSettings(cmd),
+          ),
+        ),
       ],
     ),
   );
