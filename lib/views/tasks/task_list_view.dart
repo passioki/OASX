@@ -2312,6 +2312,26 @@ class _StickyQueueHeader extends SliverPersistentHeaderDelegate {
   /// ⇒ 所以把兜底值调大（够两行内容），给测量一帧的余量。
   static const double _fallback = 132;
 
+  /// ★★★ 安全余量（像素）★★★
+  ///
+  /// ## 为什么需要（实测）
+  ///
+  /// ★ 改成 `_MeasureSize` 实测之后，溢出从 **60px -> 4px** ——
+  ///   ★ 说明测到的高度**差了这么一点点**。
+  /// ★ 来源是**布局舍入 / 字体度量**：
+  ///   * `RenderBox.size` 是整数化后的值（`Size` 可能被 `.ceilToDouble()`）
+  ///   * 文本的 `ascent/descent` 与实际 line box 可能有小数误差
+  ///   * `Wrap` 的 `runSpacing` 在换行边界上也可能差 1px
+  /// ★ 所以"实测高度"要**留一点余量**，否则永远差那几个像素。
+  static const double _safety = 16;
+
+  /// ★ 防振荡标志：见 `build()` 里 `onChange` 的"单调收敛"说明。
+  ///
+  /// ★ `true` = 已经"跳到过更高的高度"，再报更高就**忽略**
+  ///   （避免 变高->Wrap 少换行->变小->又多换行 的来回振荡）。
+  /// ★ 一旦实测**变小**就复位（说明空间分配真的变了）。
+  bool _converged = false;
+
   @override
   double get minExtent => _extent <= 0 ? _fallback : _extent;
 
@@ -2343,10 +2363,33 @@ class _StickyQueueHeader extends SliverPersistentHeaderDelegate {
     // ★ 兜底 `_fallback` 调大到 132（够两行），首帧就够用。
     Widget measure(Widget w) => _MeasureSize(
           onChange: (size) {
-            final h = size.height;
-            if (h.isFinite && h > 0 && (h - _extent).abs() > 0.5) {
-              _extent = h;
+            // ★ 实测高度 **+ 安全余量** —— 见 `_safety` 的说明
+            //   （实测：不加余量时仍差 4px ⇒ `Bottom overflowed by 4.0 pixels`）
+            final h = size.height + _safety;
+            if (!h.isFinite || h <= 0) return;
+            // ★★★ 单调收敛：**只减不增**（= 取"够用的最小高度"）★★★
+            //
+            // ## 为什么必须这样（否则可能死循环）
+            //
+            // ★ 本回调会改 `_extent` -> `shouldRebuild` 为真 ->
+            //   **重新布局** -> `_MeasureSize` 再回调 …
+            // ★ 若不限制方向：`_extent` 变大 -> 内容有更多空间 ->
+            //   `Wrap` 可能少换一行 -> 实测变小 -> `_extent` 变小 ->
+            //   又多换一行 -> **来回振荡**（每帧重排，界面卡顿）。
+            // ★ 限制成"只减不增"（且带 0.5 死区）：
+            //   * 首次从 `_fallback`(132) **降到**真实所需高度
+            //   * 之后只有"真的需要更高"时才……⚠ 那就**加不上去**了
+            // ⇒ 所以：**变高时允许一次跳到位，变小时也允许**，
+            //   但用**死区 + 上限**防振荡：只在差异 > 0.5 时改，
+            //   且一旦"这次实测 > 上次实测"就标记为已收敛（不再回调改）。
+            if ((h - _extent).abs() <= 0.5) return;      // 死区内 -> 不动
+            if (_converged && h > _extent) return;       // ★ 已收敛且要变高 -> 忽略
+            if (h < _extent) {
+              _converged = false;                        // 变小 -> 允许后续再调
+            } else {
+              _converged = true;                         // ★ 变高一次就锁定
             }
+            _extent = h;
           },
           child: w,
         );
