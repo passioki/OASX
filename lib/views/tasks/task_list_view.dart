@@ -961,14 +961,23 @@ class _ScheduleTab extends StatelessWidget with _GlobalPanelMixin {
   }
 
 
-  /// **脚本进程** 状态 + 起停（进程级硬停）。
+  /// **「停止脚本」** —— ★ 用户裁定：这里是「启动脚本」的**原位置**，
+  /// 现在的职责换成**「停止脚本」**。
+  ///
+  /// ## ★★ 用户原话 ★★
+  ///
+  /// > "**'脚本未启动 ▶启动脚本' 从任务列表移到最上**"（-> 队列区最上）
+  /// > "② 暂停/开始调度移到队首右侧；**原位置换成「停止脚本」**"
+  ///
+  /// ⇒ 所以本行：
+  /// * ★ **不再有「启动脚本」**（它搬到执行队列最上了）
+  /// * ★ 只在**进程在跑**时给一个 **「停止脚本」**（硬停，要二次确认）
+  /// * ★ 调度级的「暂停 / 继续调度」也搬到了**队首行右侧**
   ///
   /// ★ `Obx` 必须包住**直接读 Rx 变量**的那一小块。
-  ///   这里 `sm.state.value` 就是直接读 —— 所以 GetX 能记录依赖。
-  ///
   ///   反面例子（踩过）: 写 `Obx(() => SomeStatefulWidget(...))` ——
-  ///   回调里只构造组件、没读 Rx, GetX 抛
-  ///   "improper use of a GetX" 并导致**整页白屏**。
+  ///   回调里只构造组件、没读 Rx, GetX 抛 "improper use of a GetX"
+  ///   并导致**整页白屏**。
   Widget _scriptProcessRow(BuildContext context) {
     return Obx(() {
       final svc = Get.find<ScriptService>();
@@ -976,23 +985,12 @@ class _ScheduleTab extends StatelessWidget with _GlobalPanelMixin {
       final running = sm?.state.value == ScriptState.running;
       return Row(
         children: [
-          Icon(running ? Icons.play_circle : Icons.stop_circle,
+          Icon(running ? Icons.play_circle : Icons.pause_circle_outline,
               size: 18,
               color: running ? Colors.green : Theme.of(context).disabledColor),
           const SizedBox(width: 6),
           Text(running ? '脚本进程运行中' : '脚本进程已停止'),
           const SizedBox(width: 12),
-          if (!running)
-            FilledButton.icon(
-              onPressed: c.busy
-                  ? null
-                  : () async {
-                      await c.startScript();
-                      await c.reload();
-                    },
-              icon: const Icon(Icons.play_arrow, size: 18),
-              label: const Text('启动脚本'),
-            ),
           if (running)
             Tooltip(
               message: '**结束子进程**（硬停）\n'

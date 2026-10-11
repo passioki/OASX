@@ -591,11 +591,25 @@ void _sortAndPrefsTests() {
 
 // ============================================================ Round 4 收尾
 void _round4Tests() {
-  test('脚本进程开关在总览页（进程级 vs 调度级分开）', () {
+  test('进程级开关：启动在**执行队列最上**，停止在任务列表（用户裁定）', () {
     final src = codeOnly('lib/views/tasks/task_list_view.dart');
-    expect(src.contains('_scriptProcessRow'), isTrue);
-    expect(src.contains('启动脚本'), isTrue);
+    final q = codeOnly('lib/views/tasks/queue_panel.dart');
+
+    // ★★ 用户原话（片 10）★★
+    //   "'脚本未启动 ▶启动脚本' **从任务列表移到最上**"
+    //   "② 暂停/开始调度**移到队首右侧**；**原位置换成「停止脚本」**"
+    // ⇒ 「启动脚本」搬到**执行队列最上**；
+    //   「停止脚本」留在**任务列表原来那个位置**。
+    expect(q.contains('_scriptProcessBar'), isTrue,
+        reason: '★ 「启动脚本」应在执行队列区（最上）');
+    expect(q.contains('启动脚本'), isTrue,
+        reason: '★ 队列区必须有「启动脚本」');
+    expect(src.contains('_scriptProcessRow'), isTrue,
+        reason: '★ 任务列表那行还在（它现在只剩「停止脚本」）');
     expect(src.contains('停止脚本'), isTrue);
+    // ★ 任务列表**不该再有「启动脚本」**（已搬到队列区）
+    expect(src.contains("label: const Text('启动脚本')"), isFalse,
+        reason: '★ 用户要求把「启动脚本」**从任务列表移走**');
 
     // ★ 硬停要二次确认 —— 它会打断当前战斗，
     //   危险程度与「暂停调度」（安全点停）不同。
