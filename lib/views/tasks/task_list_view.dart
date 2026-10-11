@@ -1916,21 +1916,54 @@ class _QueueTab extends StatelessWidget {
     //   用原生 `Padding` 包一层。
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
+      // ★★★ 用 `Wrap` 而不是 `Row`（用户报的遮挡 bug）★★★
+      //
+      // ## 用户原话
+      //
+      // > "前端**简报展开**后，快捷排序那一栏的按钮并没有随着展开进行
+      // >  合理的收窄适应，表现为**展开后遮挡了按钮**。这个应当和执行顺序
+      // >  那一栏保持同款或者合理的缩放。"
+      //
+      // ## 根因
+      //
+      // 原来这里是 **`Row`**（**不换行**）:
+      // ```dart
+      // child: Row(children: [
+      //   const SizedBox(width: 168, child: Text('快捷排序')),   // ★ 固定 168px
+      //   OutlinedButton.icon(...), const SizedBox(width: 8),
+      //   OutlinedButton.icon(...), ...
+      // ])
+      // ```
+      // ★ 简报抽屉展开时**左栏收窄** -> `Row` 的总宽超过可用宽度 ->
+      //   右侧按钮被**挤出/裁掉**（看起来就是"被遮挡"）。
+      //
+      // ## 修法: 与**同一吸顶区的** `_profilesRow` **同款**
+      //
+      // `_profilesRow` 用的是 `Wrap` —— 宽度不够时**自动换行**，
+      // 永不溢出。★ 这就是用户说的"**和执行顺序那一栏保持同款**"。
+      // （`Wrap` 增高会被 `_StickyQueueHeader` 实测并上报 —— 见它的说明。）
+      //
+      // ⚠ 顺带去掉那个 `SizedBox(width: 168)` 的**固定标签占位** ——
+      //   固定宽度在窄栏里就是纯粹的浪费；`Wrap` 里标签**自然宽度**即可。
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 4,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          const SizedBox(width: 168, child: Text('快捷排序')),
+          Text('快捷排序',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  )),
           OutlinedButton.icon(
             onPressed: c.sortingQueue ? null : () => c.sortQueueBy('timed'),
             icon: const Icon(Icons.schedule, size: 16),
             label: const Text('周期排前面'),
           ),
-          const SizedBox(width: 8),
           OutlinedButton.icon(
             onPressed: c.sortingQueue ? null : () => c.sortQueueBy('fixed'),
             icon: const Icon(Icons.push_pin, size: 16),
             label: const Text('临时排前面'),
           ),
-          const SizedBox(width: 8),
           // ★★★ 说明改为**悬停显示**（用户要求）★★★
           //
           // 用户原话: "把[排一次之后随便排]这类提示都作为**指针悬停后显示**"。
@@ -1947,12 +1980,16 @@ class _QueueTab extends StatelessWidget {
                 '**包括「休息」**（它拖到中间时, 后面的任务会等它结束再跑）。',
             child: Icon(Icons.help_outline, size: 17),
           ),
-          const SizedBox(width: 8),
-          // 分组竖线: 左边 = 快捷排序（动作）, 右边 = 全局开关（设置）
+          // ⚠ 这里**不能**再写 `const SizedBox(width: 8)` ——
+          //   `Wrap` 已经用 `spacing: 8` 统一给了间距;
+          //   再写会变成 16（换行后尤其明显）。
+          // ★ 分组竖线: 左边 = 快捷排序（动作）, 右边 = 全局开关（设置）
+          //   ⚠ `Wrap` 里**不设 `height`**（`height: 22` 会在换行时把行高撑歪）;
+          //     用一个自适应的细线容器即可。
           Container(
             width: 1,
-            height: 22,
-            margin: const EdgeInsets.symmetric(horizontal: 12),
+            height: 20,
+            margin: const EdgeInsets.symmetric(horizontal: 2),
             color: Theme.of(context).colorScheme.outlineVariant,
           ),
           // ★★★ 全局开关 —— 并进这一行（用户要求: "放到执行队列里,
