@@ -574,12 +574,18 @@ Widget _queueBadge(BuildContext context,
       children: [
         Icon(icon, size: 13, color: color),
         const SizedBox(width: 2),
-        Text(
-          text,
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: color,
-                fontWeight: FontWeight.w700,
-              ),
+        // ★ 小窗口下标记文字可裁剪（父级 `Flexible` 会限宽）——
+        //   ★ 不这么做时，长标记（"已运行 12 次"）会把整行顶出去
+        Flexible(
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: color,
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
         ),
       ],
     ),
@@ -616,6 +622,9 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
   if (i < 0 || i >= rows.length) return const SizedBox.shrink();
   final e = rows[i];
   final isTask = '${e['kind']}' == 'task';
+  // ★ 这一页里**没有任何条目在跑**？（暂停的边界兜底要用，见下面按钮那儿）
+  final noRunningRow = !rows.any(
+      (r) => '${r['kind']}' == 'task' && r['running'] == true);
   final cmd = isTask ? '${e['task']}' : '';
   final isAuto = e['_auto'] == true;
 
@@ -819,11 +828,25 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                         }
                         return Tooltip(
                           message: msg,
-                          child: _queueBadge(
-                            context,
-                            text: text,
-                            color: color,
-                            icon: icon,
+                          // ★★★ 片 11: **小窗口不许溢出**（用户报的遮挡）★★★
+                          //
+                          // > "在 OASX 窗口较小时，**执行队列以及右边的解释说明
+                          // >  遮挡了其他页面**，请修正。"
+                          //
+                          // ★ 根因：这一行右边全是**固定宽**的东西
+                          //   （拖把手 + 序号 + 类别标签 + 标记 + 设置 +
+                          //     播放/暂停按钮），只有任务名是 `Flexible` ——
+                          //   窗口一窄，总宽超过可用宽 ⇒ **RenderFlex 溢出**
+                          //   （Flutter 画黑黄条纹，**盖住相邻内容**）。
+                          // ★ 修法：把**标记**也放进 `Flexible` 并可省略号裁剪
+                          //   ⇒ 窄窗口下先牺牲标记文字，**布局不炸**。
+                          child: Flexible(
+                            child: _queueBadge(
+                              context,
+                              text: text,
+                              color: color,
+                              icon: icon,
+                            ),
                           ),
                         );
                       }),
@@ -851,20 +874,47 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                     //   把该条目的 `next_run` 拉到现在（与"乱序"同一手法）
                     //   ⇒ 调度器下一轮自然选它，**不改调度核心**。
                     // ★ 正在跑的那一条不显示按钮（它已经在跑了）。
-                    // ★★★ 片 11: 调度**已暂停**时 -> 任何行都能"继续" ★★★
+                    // ★★★ 片 11（用户最终裁定）: **暂停/恢复只在这一条上** ★★★
                     //
-                    // ## ★★ 用户报的真 bug ★★
+                    // ## ★★ 用户原话（两次收紧）★★
                     //
-                    // > "我主动点击开始后，出现了暂停调度按钮，
-                    // >  但是**我再次点击并没有恢复调度**，是不是功能设反了。"
+                    // > "这个**暂停调度/恢复调度**不是集成到**任务运行行里的
+                    // >  按钮**上了吗，**这应该是 bug，不应该给别的按钮添加
+                    // >  该功能造成混淆**。"
                     //
-                    // ★ 根因：`[⏸]` 点了会暂停调度，而"继续"的入口原来只有
-                    //   运行控制条里那一个（已按用户要求移走）
-                    //   ⇒ **暂停后无处可点**。
-                    // ★ 修法：**已暂停时，正在运行那一行显示 `[▶]` = 继续**。
+                    // > "**已暂停，只能是暂停中任务能恢复，这样才够优雅！**
+                    // >  这个**恢复调度按钮是出现在暂停中任务行上**，
+                    // >  **而不是任意行**"
+                    //
+                    // ## 三条分支（互斥，且**都锚在"那一条任务"上**）
+                    //
+                    // | 条件 | 按钮 | 点击 |
+                    // |---|---|---|
+                    // | ★ **正在跑 + 调度已暂停** | `[▶]` 绿 | **恢复 + 播放头设到这条** |
+                    // | **正在跑**（未暂停）| `[⏸]` 橙 | **暂停调度** |
+                    // | 未运行 | `[▶]` 描边 | 播放头设到这条 |
+                    //
+                    // ★ 关键：`e['running'] == true` 是**共同前提** ——
+                    //   暂停/恢复**永远只长在"当前那一条"上**，
+                    //   其它行只有"播放头"语义（`[▶]` 描边）。
+                    // ★ 后端 `entry_play` 仍会顺带 `resume()`（幂等）——
+                    //   所以点哪一条都不会出现"点了没反应"。
+                    // ★ 边界兜底：**已暂停但"没有正在跑的那一条"**时，
+                    //   恢复按钮落在**队首那一行**。
+                    //
+                    // ★ 什么时候会这样：
+                    //   点 `[⏸]` 后，脚本在**安全点**才真的停手
+                    //   （跑完当前这一场）—— 停手后 `script.py` 会
+                    //   **清掉 `running_entry_id`** ⇒ 上面那个分支的
+                    //   `e['running']` 变成 false ⇒ ★ **按钮消失** ⇒
+                    //   用户**又找不到恢复入口**了。
+                    // ★ 所以必须有一个兜底：**暂停态 + 没有任何条目在跑**
+                    //   ⇒ 恢复按钮放在**队首**（恢复后就从它往下跑）。
+                    //   ⚠ 这**不是**"任意行都能恢复" —— 只有**一行**有按钮。
                     if (isTask && c.schedulerPaused && e['running'] == true)
                       Tooltip(
-                        message: '★ **继续调度** —— 恢复后**接着往下跑**。\n'
+                        message: '★ **恢复调度** —— 点它会**接着往下跑**。\n'
+                            '★ 同时把**播放头**设回这一条（从这里继续）。\n'
                             '★ 队列顺序没有被改动过。',
                         child: IconButton(
                           visualDensity: VisualDensity.compact,
@@ -873,7 +923,41 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                               minWidth: 28, minHeight: 28),
                           onPressed: c.playingEntry == true
                               ? null
-                              : () => c.resumeSchedule(),
+                              : () => _playEntry(context, c, e),
+                          icon: const Icon(Icons.play_circle_filled,
+                              size: 18, color: Colors.green),
+                        ),
+                      )
+                    else if (isTask && c.schedulerPaused &&
+                        noRunningRow && i == 0)
+                      Tooltip(
+                        message: '★ **恢复调度** —— 上次暂停后任务已停手。\n'
+                            '★ 点它从**队首**继续往下跑。',
+                        child: IconButton(
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                              minWidth: 28, minHeight: 28),
+                          onPressed: c.playingEntry == true
+                              ? null
+                              : () => _playEntry(context, c, e),
+                          icon: const Icon(Icons.play_circle_filled,
+                              size: 18, color: Colors.green),
+                        ),
+                      )
+                    else if (isTask && e['running'] == true)
+                      Tooltip(
+                        message: '★ **恢复调度** —— 点它会**接着往下跑**。\n'
+                            '★ 同时把**播放头**设到这一条（从这里开始）。\n'
+                            '★ 队列顺序没有被改动过。',
+                        child: IconButton(
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                              minWidth: 28, minHeight: 28),
+                          onPressed: c.playingEntry == true
+                              ? null
+                              : () => _playEntry(context, c, e),
                           icon: const Icon(Icons.play_circle_filled,
                               size: 18, color: Colors.green),
                         ),
