@@ -335,7 +335,7 @@ class _TaskListViewState extends State<TaskListView> {
       //   ⚠ `length` **必须**与下面 `TabBar` 的 tab 数一致,
       //     不匹配会**运行时崩**（我踩过一次: 改了 TabBar 忘了改 length）。
       //
-      // ★★★ `DefaultTabController` **也一起删了**（TabBar 已移除）★★★
+      // ★★★ 页内那个 Tab 控制器 **也一起删了**（TabBar 已移除）★★★
       //
       // 用户裁定: "把两个 tab 放到任务列表下边，即**调度：[任务列表，
       // 执行队列]**，调度和任务列表互换名字"。
@@ -610,13 +610,64 @@ class _TaskListViewState extends State<TaskListView> {
         //     那"首页=执行队列"只对**手动点**执行队列生效, 开屏还是任务列表。
         //   * 显式点「任务列表」(`TaskListPanel`) 仍显示任务列表, 不受影响。
         if (sel == 'TaskListPanel') {
-          return _ScheduleTab(c: c, searchCtrl: _searchCtrl);
+          return _safePage(() => _ScheduleTab(c: c, searchCtrl: _searchCtrl));
         }
         // `'QueuePanel'`（显式点「执行队列」）与 `'TaskList'`（导航树「调度」
         // 入口）都显示**执行队列**。
-        return _QueueTab(c: c);
+        return _safePage(() => _QueueTab(c: c));
       },
     );
+  }
+
+  /// ★★★ 乙（续）：**页面级兜底** —— 任何渲染异常都不再白屏 ★★★
+  ///
+  /// ## 用户报的现象
+  ///
+  /// > "**执行顺序页面直接白屏了**"
+  /// > "这个白屏是在**启动脚本之后**出现的，**脚本停止后不消失**，
+  /// >  **点击清理队列就会消失**。"
+  ///
+  /// ## 为什么再加一层（行级兜底之外）
+  ///
+  /// ★ 我在 `QueueRow.build` 加了**行级** try/catch（脏条目不再炸整页）。
+  /// ★ 但页面里还有**别的**渲染入口也可能被脏数据炸到：
+  ///   `_profilesRow`（配置页）/ `_sortActions`（快捷排序 + 全局开关）/
+  ///   `_monitorStrip` / `_bulkPanel` / `_tablePanel` …
+  ///   —— 它们**都不在**那一层保护里。
+  /// ★ 所以这里再包一层：★ **整页渲染失败也给提示**，绝不白屏。
+  ///
+  /// ⚠ 这只是"护栏"，**不是**修根因 —— 真正的脏数据源应另行修掉；
+  ///   但护栏能保证"**用户至少看得到原因**"，而不是对着白屏。
+  Widget _safePage(Widget Function() build) {
+    try {
+      return build();
+    } catch (exc, stack) {
+      debugPrint('TaskListView 页面渲染失败: $exc');
+      debugPrint('$stack');
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.error_outline, size: 32, color: Colors.red.shade400),
+              const SizedBox(height: 12),
+              const Text('这一页渲染出错了（已避免白屏）',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              SelectableText('$exc',
+                  style: const TextStyle(fontSize: 12),
+                  textAlign: TextAlign.center),
+              const SizedBox(height: 8),
+              const Text('★ 完整堆栈已打到日志（debug 版会显示）\n'
+                  '★ 可先「清空队列」恢复，然后把这段文字发给开发者',
+                  style: TextStyle(fontSize: 12),
+                  textAlign: TextAlign.center),
+            ],
+          ),
+        ),
+      );
+    }
   }
 
   /// ★★★ 运行日志**单行条** —— 横在页面最上方（用户要求）★★★

@@ -1125,8 +1125,13 @@ void _phase2Tests() {
         reason: '「任务列表」区块必须在');
     expect(view.contains('_QueueTab('), isTrue,
         reason: '「执行队列」区块必须在');
-    expect(view.contains('_bodyFor('), isTrue,
+    // ⚠ 乙（页面级兜底）之后，分派被包进 `_safePage(() => …)` ——
+    //   所以这里断言"分派函数**存在**"（不要求紧跟 `(`）
+    expect(view.contains('_bodyFor'), isTrue,
         reason: '★ 必须由 `_bodyFor()` 按导航选择决定显示哪个区块');
+    // ★ 页面级兜底必须在（否则任何渲染异常都会白屏）
+    expect(view.contains('_safePage'), isTrue,
+        reason: '★ 页面渲染要有兜底（用户报过白屏）');
     // ⚠ 这里断言的是**导航键**在导航树里的定义（`ctrl_nav.dart`）,
     //   而不是 `_bodyFor` 里的字面量 —— ★ 因为 `QueuePanel` 现在是
     //   `_bodyFor` 的**默认分支**（不带引号出现）。写错位置就会假失败。
@@ -1156,8 +1161,10 @@ void _phase2Tests() {
                '（用户: "设定 HOME 页为执行队列页"）');
     // 反向守卫: 默认分支**不能**再是任务列表
     final tail = bodyFor.substring(bodyFor.indexOf("if (sel == 'TaskListPanel')"));
-    final afterIf = tail.substring(tail.indexOf('return _ScheduleTab(') + 1);
-    expect(afterIf.contains('return _QueueTab('), isTrue,
+    // ★ 乙（页面级兜底）之后写法变成 `return _safePage(() => _QueueTab(c: c));`
+    //   ⇒ 断言放宽成"默认分支**就是** `_QueueTab`"（不管外面包了什么）
+    final afterIf = tail.substring(tail.indexOf('_ScheduleTab(') + 1);
+    expect(afterIf.contains('_QueueTab('), isTrue,
         reason: '★ 默认（else）分支必须是 `_QueueTab` —— 那是"首页=执行队列"的落点');
     // ★★ 关键: 必须**订阅** `NavCtrl` —— 否则点树上的叶子页面不重建
     expect(view.contains('GetX<NavCtrl>'), isTrue,

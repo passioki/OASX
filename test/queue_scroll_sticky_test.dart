@@ -91,8 +91,10 @@ void main() {
       expect(body.contains("sel == 'TaskListPanel'"), isTrue,
           reason: "★ 「任务列表」需要显式判断");
       final tail = body.substring(body.indexOf("if (sel == 'TaskListPanel')"));
-      final afterIf = tail.substring(tail.indexOf('return _ScheduleTab(') + 1);
-      expect(afterIf.contains('return _QueueTab('), isTrue,
+      // ★ 乙（页面级兜底）之后写法变成 `return _safePage(() => _QueueTab(c: c));`
+      //   ⇒ 断言放宽成"默认分支**就是** `_QueueTab`"（不管外面包了什么）
+      final afterIf = tail.substring(tail.indexOf('_ScheduleTab(') + 1);
+      expect(afterIf.contains('_QueueTab('), isTrue,
           reason: '★ 默认（else）分支必须是 `_QueueTab` —— '
               '那就是"首页=执行队列"的落点（用户: "设定 HOME 页为执行队列页"）');
     });
