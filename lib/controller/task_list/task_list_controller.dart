@@ -341,11 +341,89 @@ class TaskListController extends GetxController with LogMixin {
     //   onInit 期间控制器的监听者还没挂好。
     Future.microtask(reload);
     _subscribeLog();
+    _startQueuePolling();
   }
+
+  /// ★★★ 队列状态的**轻量轮询**（修用户报的真 bug）★★★
+  ///
+  /// ## ★★ 用户报的现象 ★★
+  ///
+  /// > "**启动脚本时，周期任务上正在运行的状态没有出现，暂停调度也没有出现。**"
+  ///
+  /// ## 根因（实测）
+  ///
+  /// * ★ WebSocket 只推 **`state`** 与 **`schedule`（running/pending/waiting）**
+  ///   —— 它**不含** `entry_id`。
+  /// * ★ 而界面上那个「运行中」标记 / `[⏸]` 暂停按钮 依赖
+  ///   **`/run_list` 里每条目的 `running` 字段**
+  ///   （后端按 `running_entry_id` 算 —— "**身份，不是位置**"）。
+  /// * ★ **`/run_list` 只在 `reload()` 时拉**，而 `reload()` 之前**没有任何
+  ///   定时触发** ⇒ 脚本跑起来后界面**永远看不到**"运行中"。
+  ///
+  /// ## 为什么用轮询（而不是监听 `runningTask`）
+  ///
+  /// ★ `runningTask` 是 `Rx<TaskItemModel>`，但**同一个任务连跑两次时值不变**
+  ///   （`TaskItemModel` 相等）⇒ 监听会**漏掉**第二次开始。
+  /// ★ 而 `running_entry_id` 会变（条目身份不同）⇒ **轮询 `/run_list` 最可靠**。
+  /// ★ 周期取 3 秒：足够"看起来实时"，又不至于把后端打满
+  ///   （只多一个 `/run_list` 请求 —— `reload()` 本来就拉 4 个）。
+  void _startQueuePolling() {
+    _queuePoller?.cancel();
+    _queuePoller = Timer.periodic(const Duration(seconds: 3), (_) async {
+      if (isClosed) return;
+      // ★ 只在**脚本进程在跑**时轮询 —— 没跑时队列不会变, 省请求
+      //   ⚠ `ScriptState` 只有 `inactive/running/warning/updating` ——
+      //     **没有** `paused`（"暂停调度"是**调度级**状态，进程仍是 `running`）
+      final sm = _scriptModelOf();
+      if (sm?.state.value != ScriptState.running) {
+        return;
+      }
+      try {
+        final rl = await _api.getRunList(scriptName);
+        if (isClosed) return;
+        final fresh = ((rl['entries'] as List?) ?? const [])
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+        // ★ 只在**真的有变化**时 update（避免每 3 秒无谓重建整页）
+        if (_queueEntriesDiffer(fresh)) {
+          entries = fresh;
+          update();
+        }
+      } catch (_) {
+        // 轮询失败**不报错**（下一次再来）—— 不能因为网络抖动弹提示
+      }
+    });
+  }
+
+  /// 轮询到的条目与当前的是否有差异（只比"会显示出来的那几个字段"）。
+  bool _queueEntriesDiffer(List<Map<String, dynamic>> fresh) {
+    if (fresh.length != entries.length) return true;
+    for (var i = 0; i < fresh.length; i++) {
+      final a = fresh[i], b = entries[i];
+      for (final k in const ['running', 'runs', 'task', 'kind', '_entryId']) {
+        if ('${a[k]}' != '${b[k]}') return true;
+      }
+    }
+    return false;
+  }
+
+  /// 取本账号的 `ScriptModel`（拿不到返回 null）。
+  dynamic _scriptModelOf() {
+    try {
+      return Get.find<ScriptService>().scriptModelMap[scriptName];
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Timer? _queuePoller;
 
   @override
   void onClose() {
     _searchDebounce?.cancel();
+    // ★ 一定要取消轮询 —— 否则控制器销毁后 Timer 还在跑
+    _queuePoller?.cancel();
+    _queuePoller = null;
     // ★ 一定要取消订阅 —— 否则控制器销毁后 sink 还挂在
     //   `ScriptService` 上, 日志会往一个死控制器里塞。
     _unsubscribeLog?.call();
@@ -399,6 +477,29 @@ class TaskListController extends GetxController with LogMixin {
       entries = ((rl['entries'] as List?) ?? const [])
           .map((e) => Map<String, dynamic>.from(e as Map))
           .toList();
+      // ★★★ 片 11: **调度是否被暂停**（队列行按钮要按它切换）★★★
+      //
+      // ## ★★ 用户报的真 bug ★★
+      //
+      // > "我主动点击开始后，出现了暂停调度按钮，
+      // >  但是我**再次点击并没有恢复调度**，是不是功能设反了。"
+      //
+      // ★ 根因：`[⏸]` 点了会把**调度**暂停，而"继续"的入口
+      //   **只有运行控制条里那个**（已按用户要求移走）
+      //   ⇒ ★ **暂停后没有"继续"的入口了**。
+      // ★ 修法：把 `paused` 读进控制器，队列行那颗按钮**按它切换**：
+      //   | 状态 | 按钮 | 点击 |
+      //   |---|---|---|
+      //   | **调度已暂停** | `[▶]`（继续）| 恢复调度 |
+      //   | 正在运行的那条 | `[⏸]` | 暂停调度 |
+      //   | 未运行 | `[▶]` | 播放头设到这条 |
+      try {
+        final rc = await _api.getRunControl(scriptName);
+        schedulerPaused = rc['paused'] == true;
+      } catch (_) {
+        // 拿不到就保持原值（不要因为一次网络抖动把按钮状态搞乱）
+      }
+      update();
       flow = ((pv['flow'] as List?) ?? const [])
           .map((e) => Map<String, dynamic>.from(e as Map))
           .toList();
@@ -690,6 +791,32 @@ class TaskListController extends GetxController with LogMixin {
 
   /// ★ 正在处理"播放"请求（防止连点）。
   bool? playingEntry = false;
+
+  /// ★★★ 片 11: **调度是否被暂停**（从 `/run_control` 读）★★★
+  ///
+  /// ★ 队列行的按钮按它切换：
+  /// * **已暂停** ⇒ 显示 `[▶]`（点 = **恢复调度**）
+  /// * 正在运行那一条 ⇒ 显示 `[⏸]`（点 = 暂停调度）
+  /// * 未运行 ⇒ 显示 `[▶]`（点 = 把它设为播放头）
+  bool schedulerPaused = false;
+
+  /// ★ **恢复调度**（队列行 `[▶]` 在"已暂停"时的动作）。
+  Future<void> resumeSchedule() async {
+    if (playingEntry == true) return;
+    playingEntry = true;
+    update();
+    try {
+      await _api.resumeScript(scriptName);
+      await reload();
+      Get.snackbar('已继续调度', '接着往下跑（队列顺序没动）',
+          snackPosition: SnackPosition.BOTTOM);
+    } catch (e) {
+      Get.snackbar('继续失败', '$e', snackPosition: SnackPosition.BOTTOM);
+    } finally {
+      playingEntry = false;
+      update();
+    }
+  }
 
   /// ★★★ 片 6: **跨配置**转移配置页（歌单）★★★
   ///

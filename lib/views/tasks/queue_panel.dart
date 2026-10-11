@@ -819,28 +819,34 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                     //   把该条目的 `next_run` 拉到现在（与"乱序"同一手法）
                     //   ⇒ 调度器下一轮自然选它，**不改调度核心**。
                     // ★ 正在跑的那一条不显示按钮（它已经在跑了）。
-                    // ★★★ 队列行上的调度控制（用户裁定 2026-10-11）★★★
+                    // ★★★ 片 11: 调度**已暂停**时 -> 任何行都能"继续" ★★★
                     //
-                    // ## ★★ 用户原话 ★★
+                    // ## ★★ 用户报的真 bug ★★
                     //
-                    // > "未运行的行  [▶] → **播放头设到这条 + 调度器开始跑**"
-                    // > "正在运行的行 [⏸] → **暂停调度**"
-                    // > "正在运行的行 [▶]? → **不需要**（它已经在跑）"
+                    // > "我主动点击开始后，出现了暂停调度按钮，
+                    // >  但是**我再次点击并没有恢复调度**，是不是功能设反了。"
                     //
-                    // ## 为什么要合并
-                    //
-                    // > "**[⏸ 暂停调度] 应该和队列中任务点击运行那个按钮
-                    // >   是一个东西，放在外边就冗余了**"
-                    //
-                    // ⇒ ★ 同一位置、**按状态互斥显示**：
-                    //   | 这一条 | 显示 | 点击效果 |
-                    //   |---|---|---|
-                    //   | **正在运行** | `[⏸]` | 暂停调度（**不动队列顺序**）|
-                    //   | **未运行** | `[▶]` | 播放头设到这条 + 开始跑 |
-                    //
-                    // ★ **暂停不再"退回队首"**（用户: "执行顺序就是个播放列表,
-                    //   退回队首不应该是软件来操作的"）⇒ 后端已删该逻辑。
-                    if (isTask && e['running'] == true)
+                    // ★ 根因：`[⏸]` 点了会暂停调度，而"继续"的入口原来只有
+                    //   运行控制条里那一个（已按用户要求移走）
+                    //   ⇒ **暂停后无处可点**。
+                    // ★ 修法：**已暂停时，正在运行那一行显示 `[▶]` = 继续**。
+                    if (isTask && c.schedulerPaused && e['running'] == true)
+                      Tooltip(
+                        message: '★ **继续调度** —— 恢复后**接着往下跑**。\n'
+                            '★ 队列顺序没有被改动过。',
+                        child: IconButton(
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                              minWidth: 28, minHeight: 28),
+                          onPressed: c.playingEntry == true
+                              ? null
+                              : () => c.resumeSchedule(),
+                          icon: const Icon(Icons.play_circle_filled,
+                              size: 18, color: Colors.green),
+                        ),
+                      )
+                    else if (isTask && e['running'] == true)
                       Tooltip(
                         message: '★ **暂停调度** —— 跑完**当前这一场**就停手。\n'
                             '★ **队列顺序不会被改动**（它是你编排的播放列表）。\n'
