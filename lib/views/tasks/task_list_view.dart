@@ -907,8 +907,6 @@ class _ScheduleTab extends StatelessWidget with _GlobalPanelMixin {
         child: Obx(() {
           final state = sm?.state.value;
           final running = state == ScriptState.running;
-          final cur = sm?.runningTask.value;
-          final curName = (cur == null) ? '' : cur.taskName;
           final pending = sm?.pendingTaskList.length ?? 0;
           final waiting = sm?.waitingTaskList.length ?? 0;
           final cool = c.allTasks.where((t) => t['in_cooldown'] == true).length;
@@ -931,7 +929,21 @@ class _ScheduleTab extends StatelessWidget with _GlobalPanelMixin {
                   Text(_stateLabel(state)),
                 ],
               ),
-              Text('正在运行: ${curName.isEmpty ? "（空闲）" : _zhName(curName)}'),
+              // ★★★ 片 5 (F2e): **删掉「正在运行: xxx」这一项** ★★★
+              //
+              // ## ★★ 用户裁定（最新）★★
+              //
+              // > "**执行队列那个正在运行个人突破不应该存在了啊**，
+              // >  这个不符合咱们列表里流转[正在运行]状态的定义。"
+              // > "**队首只是代表列表顺序第一个而已，但正在运行的可以使
+              // >  列表里任意一个。**"
+              //
+              // ★ 所以"正在运行的是谁"**只在执行队列里那一行上显示**
+              //   （「运行中」标记，见 `queue_panel.dart`），
+              //   这里**不该再有第二个说法** —— 否则又会出现"两处口径"。
+              //
+              // ⚠ 前面那个 `Icon + _stateLabel(state)`（**脚本进程状态**）保留 ——
+              //   那是"脚本有没有在跑"，与"哪一条在跑"是**两件事**。
               Text('待执行 $pending'),
               Text('等待中 $waiting'),
               if (cool > 0)
@@ -948,15 +960,6 @@ class _ScheduleTab extends StatelessWidget with _GlobalPanelMixin {
     );
   }
 
-  /// 命令名 -> 中文名（拿不到就回退命令名）。
-  ///
-  /// ★ WebSocket 推的 `taskName` 是**大驼峰命令名**（`DemonEncounter`）,
-  ///   直接显示就是英文。中文名来自 `/overview` 的 `name_zh`
-  ///   （源头是各任务的 `meta.py`）—— **前端不维护第二份**。
-  String _zhName(String command) {
-    final zh = c.zhNameOf(command);
-    return zh.isEmpty ? command : zh;
-  }
 
   /// **脚本进程** 状态 + 起停（进程级硬停）。
   ///
@@ -1648,6 +1651,19 @@ class _QueueTab extends StatelessWidget {
           //
           // ★ 说明写清"复制的是什么"：整页快照（队列 + 启停/次数 + 全局开关），
           //   与"新建"的区别只是模板来源（那一页 vs 当前状态）。
+          // ★★★ 片 6 (F6a): 「从别的配置复制…」—— 跨配置转移 ★★★
+          //
+          // ★ 用户原话：
+          // > "现在有的任务顺序**配置页只能在当前配置中实现复制**，
+          // >  我想要可以**跨配置转移**。如**复制 test 配置页到[伴生树]中**这样的操作。"
+          //
+          // ★ 与「复制这一页…」的区别：
+          //   复制这一页 = **本配置内**另存一页（后端会切过去）
+          //   从别的配置复制 = **把别的配置的某一页搬过来**（后端**不切**目标当前页）
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'transfer'),
+            child: const Text('从别的配置复制…'),
+          ),
           SimpleDialogOption(
             onPressed: () => Navigator.pop(ctx, 'copy'),
             child: const Text('复制这一页…'),
@@ -1668,6 +1684,10 @@ class _QueueTab extends StatelessWidget {
       ),
     );
     if (!context.mounted || action == null) return;
+    if (action == 'transfer') {
+      await _transferProfile(context, c);
+      return;
+    }
     if (action == 'copy') {
       await _copyProfile(context, c, id, name);
       return;
@@ -1677,6 +1697,151 @@ class _QueueTab extends StatelessWidget {
       return;
     }
     await _deleteProfile(context, c, id, name);
+  }
+
+  /// ★★★ 片 6: **从别的配置复制一页过来**（跨配置转移，F6b）★★★
+  ///
+  /// ★ 用户要求：
+  /// > "现在有的任务顺序**配置页只能在当前配置中实现复制**，
+  /// >  我想要可以**跨配置转移**。如**复制 test 配置页到[伴生树]中**这样的操作。"
+  ///
+  /// ★ 两步选择（源配置 -> 那一页）+ 可改新名；数据来自
+  ///   `GET /queue_profile/transfer_sources`（**排除当前配置** ——
+  ///   本配置内的复制由「复制这一页…」负责）。
+  /// ★ 后端**不会**切换本配置的当前页 ⇒ 提示里要说清"新页已加入，
+  ///   可在配置页列表里切过去"，否则用户会以为没生效。
+  Future<void> _transferProfile(
+      BuildContext context, TaskListController c) async {
+    final List<Map<String, dynamic>> sources;
+    try {
+      sources = await c.loadTransferSources();
+    } catch (e) {
+      if (!context.mounted) return;
+      Get.snackbar('读取失败', '拿不到其它配置页: $e',
+          snackPosition: SnackPosition.BOTTOM);
+      return;
+    }
+    if (!context.mounted) return;
+    if (sources.isEmpty) {
+      Get.snackbar('没有可复制的来源', '其它配置里还没有配置页（歌单）',
+          snackPosition: SnackPosition.BOTTOM);
+      return;
+    }
+
+    String? fromConfig = '${sources.first['config']}';
+    final profilesOf = (String cfg) {
+      final one = sources.firstWhere(
+        (s) => '${s['config']}' == cfg,
+        orElse: () => const <String, dynamic>{},
+      );
+      return ((one['profiles'] as List?) ?? const [])
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+    };
+    String? profileId;
+    final nameCtrl = TextEditingController();
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final profs = profilesOf(fromConfig ?? '');
+          if (profileId == null ||
+              !profs.any((p) => '${p['id']}' == profileId)) {
+            profileId = profs.isEmpty ? null : '${profs.first['id']}';
+          }
+          final cur = profs.firstWhere(
+            (p) => '${p['id']}' == profileId,
+            orElse: () => const <String, dynamic>{},
+          );
+          // ★ 默认名 = 源页名字（用户可改）
+          if (nameCtrl.text.isEmpty && cur.isNotEmpty) {
+            nameCtrl.text = '${cur['name']}';
+          }
+          return AlertDialog(
+            title: const Text('从别的配置复制一页'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('会把**别的配置**里的某一页（歌单）复制到**当前配置**'
+                    '（${c.script}）里。\n'
+                    '★ 复制的是**整页快照**：队列顺序 + 每任务启停/次数 + 全局开关。\n'
+                    '★ **不会切换**当前配置正在用的页 —— '
+                    '复制完可以在配置页列表里切过去。'),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: fromConfig,
+                  decoration: const InputDecoration(
+                      labelText: '来源配置', isDense: true),
+                  items: [
+                    for (final s in sources)
+                      DropdownMenuItem(
+                        value: '${s['config']}',
+                        child: Text('${s['config']}'),
+                      ),
+                  ],
+                  onChanged: (v) => setLocal(() {
+                    fromConfig = v;
+                    profileId = null;      // 换配置 -> 重选页
+                    nameCtrl.text = '';
+                  }),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: profileId,
+                  decoration:
+                      const InputDecoration(labelText: '配置页', isDense: true),
+                  items: [
+                    for (final p in profs)
+                      DropdownMenuItem(
+                        value: '${p['id']}',
+                        child: Text('${p['name']}（${p['count']} 条）'),
+                      ),
+                  ],
+                  onChanged: (v) => setLocal(() {
+                    profileId = v;
+                    final one = profs.firstWhere(
+                      (p) => '${p['id']}' == v,
+                      orElse: () => const <String, dynamic>{},
+                    );
+                    nameCtrl.text = '${one['name']}';
+                  }),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(
+                      labelText: '复制到当前配置后的名字', isDense: true),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: (fromConfig == null || profileId == null)
+                    ? null
+                    : () => Navigator.pop(ctx, true),
+                child: const Text('复制过来'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (!context.mounted || ok != true) return;
+    final msg = await c.transferQueueProfile(
+      fromConfig: fromConfig!,
+      profileId: profileId!,
+      name: nameCtrl.text.trim(),
+    );
+    if (!context.mounted) return;
+    Get.snackbar('跨配置复制', msg,
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 5));
   }
 
   /// ★ **复制当前页**（歌单）—— 片 5 / F3a。

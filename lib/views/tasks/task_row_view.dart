@@ -415,30 +415,23 @@ class _TaskRowViewState extends State<TaskRowView> {
   ///
   /// 数据来自 `/schema` 的 `list.run_record`（后端已格式化好 `seconds_text`，
   /// 前端不重复实现一遍中文格式化）。
-  /// **优先级** —— 定时任务内部排序的**最终裁判**（数字小的先跑）。
+  /// ★★★ 片 9: **「优先级」已废弃**（用户裁定）★★★
   ///
-  /// 见 `docs/architecture.md` §5.4.1 的五级排序:
-  /// 能否跑 > 到点程度 > 窗口快关 > 耗时短 > **用户自定义优先级**。
+  /// > "这个**优先级似乎没有意义，应该属于废弃词条**了。"
+  ///
+  /// ★ 实测：调度 `get_next()` **不读** `priority`（只按 `next_run` 排 +
+  ///   队列顺序）⇒ ★ 改它**对"谁先跑"没有任何影响**。
+  /// ⇒ 任务表格里**不再可编辑**；保留一个**只读数字**
+  ///   （表头仍可按它排序，方便老用户看历史值）。
+  ///
+  /// ⚠ 后端字段暂时保留（老配置兼容），彻底删字段是**独立一片**。
   Widget _priorityCell(BuildContext context, bool isOverview) {
     final p = (task['priority'] as num?)?.toInt();
     if (p == null) {
       return Text('—', style: Theme.of(context).textTheme.labelSmall);
     }
-    if (isOverview) {
-      return Text('$p', style: Theme.of(context).textTheme.labelSmall);
-    }
-    return _NumberCell(
-      key: ValueKey('pri-$p-${task['name']}'),
-      value: p,
-      width: 44,
-      hint: '5',
-      min: 1,
-      max: 9,
-      onCommit: (n) async {
-        await _c.setTaskPriority('${task['name']}', n);
-        await _c.reload();
-      },
-    );
+    // ★ 总览与列表 —— 都**只读**（不再给编辑入口）
+    return Text('$p', style: Theme.of(context).textTheme.labelSmall);
   }
 
   /// **预期完成时间**（分钟）—— "休息时可穿插"的判据输入。

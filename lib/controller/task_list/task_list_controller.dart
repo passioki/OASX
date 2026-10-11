@@ -684,6 +684,46 @@ class TaskListController extends GetxController with LogMixin {
   /// ★ 正在处理"播放"请求（防止连点）。
   bool? playingEntry = false;
 
+  /// ★★★ 片 6: **跨配置**转移配置页（歌单）★★★
+  ///
+  /// ★ 用户要求：
+  /// > "现在有的任务顺序**配置页只能在当前配置中实现复制**，
+  /// >  我想要可以**跨配置转移**。如**复制 test 配置页到[伴生树]中**这样的操作。"
+  ///
+  /// ★ 走**根级端点**（不带 `scriptName`）。
+  /// ★ 后端**跨配置时不切换目标配置的当前页** —— 所以本方法**不 reload 目标**，
+  ///   只给出提示（★ 目标配置的界面下次进去才看得到新页）。
+  /// :return 给用户看的中文提示（后端 `message`，或失败原因）
+  Future<String> transferQueueProfile({
+    required String fromConfig,
+    required String profileId,
+    String? name,
+  }) async {
+    final res = await _api.transferQueueProfile(
+      fromConfig: fromConfig,
+      toConfig: scriptName,
+      profileId: profileId,
+      name: name,
+    );
+    if (res['ok'] == true) {
+      // ★ 若源就是当前配置（同配置复制），后端会切过去 -> 需要刷新
+      if ('${res['from_config']}' == scriptName) {
+        await loadQueueProfiles();
+        await reload();
+      }
+      return '${res['message'] ?? '已转移配置页'}';
+    }
+    return '转移失败: ${res['error'] ?? '未知错误'}';
+  }
+
+  /// ★ 列出**其它配置**里可转移的配置页（供弹窗用）。
+  Future<List<Map<String, dynamic>>> loadTransferSources() async {
+    final res = await _api.getQueueProfileTransferSources(exclude: scriptName);
+    return ((res['configs'] as List?) ?? const [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+  }
+
   /// ★ **复制某一页**（歌单）—— 片 5 / F3。
   /// ★ 用户要求：
   /// > "目前对任务顺序配置页（歌单）的操作**少了一个复制**，

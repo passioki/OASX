@@ -726,6 +726,48 @@ class ApiClient {
     return res.data ?? {};
   }
 
+  /// ★★★ 片 6: **跨配置**转移配置页（歌单）★★★
+  ///
+  /// ★ 用户要求：
+  /// > "现在有的任务顺序**配置页只能在当前配置中实现复制**，
+  /// >  我想要可以**跨配置转移**。如**复制 test 配置页到[伴生树]中**这样的操作。"
+  ///
+  /// ★ 走**根级端点** `POST /queue_profile/transfer`（**不带** `scriptName` ——
+  ///   跨配置操作天然不属于某一个配置）。
+  /// ★ 后端行为：**跨配置时不切换目标配置的当前页**（否则会把它正在用的队列换掉）；
+  ///   同名 -> 自动加 `(2)`；`from_config` / `profile_id` 不存在 -> 明确报错。
+  Future<Map<String, dynamic>> transferQueueProfile({
+    required String fromConfig,
+    required String toConfig,
+    required String profileId,
+    String? name,
+  }) async {
+    final res = await request(() => post(
+          '/queue_profile/transfer',
+          data: {
+            'from_config': fromConfig,
+            'to_config': toConfig,
+            'profile_id': profileId,
+            if (name != null && name.isNotEmpty) 'name': name,
+          },
+        ));
+    return res.data ?? {};
+  }
+
+  /// ★ 列出**其它配置**里可转移的配置页（供"从别的配置复制…"弹窗）。
+  ///
+  /// :param exclude 排除某个配置（一般是**当前配置**，它由「复制这一页」覆盖）
+  Future<Map<String, dynamic>> getQueueProfileTransferSources(
+      {String? exclude}) async {
+    final res = await request(() => get(
+          '/queue_profile/transfer_sources',
+          queryParameters: {
+            if (exclude != null && exclude.isNotEmpty) 'exclude': exclude,
+          },
+        ));
+    return res.data ?? {};
+  }
+
   /// **切换到某一页**。
   ///
   /// ★ 后端在**同一个请求**里做两步（顺序关键, 原子）:

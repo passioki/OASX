@@ -977,7 +977,6 @@ Widget _settingsRow(BuildContext context, TaskListController c, String cmd,
   final target = entryTarget > 0 ? entryTarget : taskLevel;
   final fallback = (row['count'] as num?)?.toInt();
   final expected = (row['expected_minutes'] as num?)?.toInt() ?? 0;
-  final priority = (row['priority'] as num?)?.toInt() ?? 5;
 
   return Padding(
     padding: const EdgeInsets.only(left: 50, bottom: 4, top: 2),
@@ -1037,20 +1036,26 @@ Widget _settingsRow(BuildContext context, TaskListController c, String cmd,
             await c.reload();
           },
         ),
-        // 优先级 —— 定时任务排序的最终裁判（数字小的先跑）
-        Text('优先级', style: Theme.of(context).textTheme.labelSmall),
-        _NumberCell(
-          key: ValueKey('q-pri-$cmd-$priority'),
-          value: priority,
-          width: 44,
-          hint: '5',
-          min: 1,
-          max: 9,
-          onCommit: (n) async {
-            await c.setTaskPriority(key, n);
-            await c.reload();
-          },
-        ),
+        // ★★★ 片 9: **「优先级」已删除**（用户裁定：废弃词条）★★★
+        //
+        // ## ★★ 用户原话 ★★
+        //
+        // > "这个**优先级似乎没有意义，应该属于废弃词条**了，
+        // >  查一查看看要不要**全部删了**。"
+        //
+        // ## 实测依据（我查过）
+        //
+        // ```
+        // ★ 调度 get_next() 按 next_run 排序 —— ★ 【不含 priority】
+        // ★ Function.priority (config.py:94) 只被一个【调试字符串】用过
+        // ★ 前端 setTaskPriority() 会【写】它, 但调度【不读】
+        // ⇒ ★ 它是"死读死写链" —— 对"谁先跑"没有任何影响
+        // ```
+        //
+        // ★ 顺序的**唯一权威是执行队列**（`_order_by_queue()`）——
+        //   所以这里不再暴露"优先级"输入框。
+        // ⚠ 后端字段**暂时保留**（老配置兼容 + 任务列表页仍可按它排序）；
+        //   彻底删字段是**独立一片**（见台账）。
         // ★★ ④: **进该任务的设置页**（用户要求"别的任务行上也应该有"）★★
         //
         // 实测: 调度 tab 的 `TaskRowView` 有 `onTap -> openTaskSettings`,
