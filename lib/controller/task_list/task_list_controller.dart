@@ -1018,12 +1018,109 @@ class TaskListController extends GetxController with LogMixin {
   Future<bool> setEnabled(String taskName, bool enable) => _api.putScriptArg(
       scriptName, taskName, 'scheduler', 'enable', 'boolean', enable);
 
-  /// 设置目标次数。
+  /// 设置目标次数（**任务级默认值**）。
   ///
   /// ⚠ `scheduler.target` 是**调度决策**(本轮想打几次), 与任务配置里的
   ///   `limit_count`(**能力上限**)不是一回事。`0` = 用默认值。
   Future<bool> setTarget(String taskName, int target) => _api.putScriptArg(
       scriptName, taskName, 'scheduler', 'target', 'integer', target);
+
+  // ★★★ 条目级「次数」（用户裁定 —— 修"改一条全变"的 bug）★★★
+  //
+  // ## 用户报的 bug
+  //
+  // > "当前临时任务**重复添加**后，修改**次数/时间会同步到所有的同种任务**，
+  // >  而不是分开"
+  //
+  // ## 根因
+  //
+  // 次数原来只存在**任务级** `scheduler.target` —— 改一条 = 所有同任务条目
+  // 一起变。而队列里同一任务可以有多条条目（用户用重复条目表达
+  // "重复跑整个任务"）。
+  //
+  // ## 修法（用户裁定 **甲**）
+  //
+  // * ★ **条目级 `target > 0`** = "**这一条**跑几次"
+  // * 否则回落任务级 `scheduler.target`（**保留为默认值**）
+  //
+  // ★ 写入走**已有的** `PUT /run_list`（整体替换）——
+  //   **不新开端点**，且与"拖动排序"用同一条保存路径
+  //   （`saveEntriesNow()`），所以不会出现"两套写盘逻辑打架"。
+
+  /// 该条目**自己的**次数（`0` = 用任务级默认值）。
+  ///
+  /// ★ 读的是 `entries` 里的条目字段（来自 `GET /run_list` 的 `entries`），
+  ///   **不是** `/overview` 的任务级 `target`。
+  int entryTargetOf(Map<String, dynamic> entry) =>
+      (entry['target'] as num?)?.toInt() ?? 0;
+
+  /// ★ **改某一条条目自己的次数**（不动任务级默认值, 也不动别的条目）。
+  ///
+  /// 按 `entry_id` 精确定位（"**身份，不是位置**" —— 见
+  /// `docs/scheduler-architecture.md` §1.5）；拿不到 `entry_id` 时退回按下标。
+  ///
+  /// :return 是否真的改到了（`false` = 找不到那条 -> 调用方应提示）
+  Future<bool> setEntryTarget(Map<String, dynamic> entry, int target) async {
+    final t = target < 0 ? 0 : target;
+    final eid = '${entry['_entryId'] ?? entry['entry_id'] ?? ''}';
+    var hit = false;
+    for (var i = 0; i < entries.length; i++) {
+      final e = entries[i];
+      final same = eid.isNotEmpty
+          ? '${e['entry_id'] ?? ''}' == eid
+          : identical(e, entry) ||
+              (e['_entryIndex'] == entry['_entryIndex'] &&
+                  '${e['task']}' == '${entry['task']}');
+      if (!same) continue;
+      final copy = Map<String, dynamic>.from(e);
+      if (t > 0) {
+        copy['target'] = t;
+      } else {
+        // ★ 0 = 用任务级默认值 -> **删掉这个键**（与后端"非零才写"一致）
+        copy.remove('target');
+      }
+      entries[i] = copy;
+      hit = true;
+      break;
+    }
+    if (!hit) {
+      _snack('改次数失败', '队列里找不到这一条（可能刚被删除/重排）—— 请刷新');
+      return false;
+    }
+    update();
+    await saveEntriesNow();
+    await reload();
+    return true;
+  }
+
+  /// ★ 批量把**任务级 `scheduler.target`** 的当前值**灌进各条目**（迁移用）。
+  ///
+  /// 场景: 老配置里次数只在任务级；用户重复添加后想要"每条各设"。
+  /// ★ 只对**还没设过条目级次数**的条目生效（不覆盖用户已设的）。
+  Future<int> seedEntryTargetsFromTaskLevel() async {
+    var n = 0;
+    for (var i = 0; i < entries.length; i++) {
+      final e = entries[i];
+      if ('${e['kind']}' != 'task') continue;
+      if ((e['target'] as num?)?.toInt() != null &&
+          (e['target'] as num?)!.toInt() > 0) {
+        continue; // 已设过 -> 不覆盖
+      }
+      final row = taskRowOf('${e['task']}');
+      final t = (row['target'] as num?)?.toInt() ?? 0;
+      if (t <= 0) continue;
+      final copy = Map<String, dynamic>.from(e);
+      copy['target'] = t;
+      entries[i] = copy;
+      n++;
+    }
+    if (n > 0) {
+      update();
+      await saveEntriesNow();
+      await reload();
+    }
+    return n;
+  }
 
   // ---------------------------------------------------------------- 运行列表
   /// 拖拽重排（整体替换 —— 位置信息完整, 不做"保持原位"的猜测）。

@@ -849,7 +849,8 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
             ],
           ),
           // 次数 / 预期耗时 —— 就在任务下面（用户要求"放在任务上边"）
-          if (isTask) _settingsRow(context, c, cmd),
+          // ★ 传 `e`（**这一条条目**）—— 次数按条目读写（修"改一条全变"）
+          if (isTask) _settingsRow(context, c, cmd, e),
         ],
       ),
     ),
@@ -863,7 +864,19 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
 ///
 /// ⚠ 写入接口要的是**下划线键**（`row['name']`，如 `experience_youkai`），
 ///   不是大驼峰命令名（`ExperienceYoukai`）—— 踩过这个混淆。
-Widget _settingsRow(BuildContext context, TaskListController c, String cmd) {
+///
+/// ★★★ 为什么必须带上 `entry`（条目对象）★★★
+///
+/// 用户报的 bug:
+/// > "当前临时任务**重复添加**后，修改**次数/时间会同步到所有的同种任务**，
+/// >  而不是分开"
+///
+/// ★ 根因: "次数"原来只写**任务级** `scheduler.target` —— 而队列里同一任务
+///   可以有多条条目 ⇒ 改一条 = 所有同任务条目一起变。
+/// ★ 修法: **次数读写都按条目**（`entry['target']`），
+///   任务级 `scheduler.target` 只作**默认值**（用户裁定 **甲**）。
+Widget _settingsRow(BuildContext context, TaskListController c, String cmd,
+    Map<String, dynamic> entry) {
   final row = c.taskRowOf(cmd);
   final key = '${row['name']}';
   final countable = row['countable'] == true;
@@ -877,7 +890,15 @@ Widget _settingsRow(BuildContext context, TaskListController c, String cmd) {
   //   那个通用的"目标次数"框里。这里只是把**标签**改成"休息(分钟)"，
   //   让用户知道自己填的是分钟（而不是打几次）。
   final isRest = _isRestTask(cmd);
-  final target = (row['target'] as num?)?.toInt() ?? 0;
+  // ★★ 条目级次数（用户裁定 —— 修 bug）★★
+  //
+  // | 值 | 含义 |
+  // |---|---|
+  // | `entry['target'] > 0` | ★ **这一条**跑几次 |
+  // | `0` / 没有该键 | 用**任务级默认值**（`row['target']`）|
+  final entryTarget = c.entryTargetOf(entry);
+  final taskLevel = (row['target'] as num?)?.toInt() ?? 0;
+  final target = entryTarget > 0 ? entryTarget : taskLevel;
   final fallback = (row['count'] as num?)?.toInt();
   final expected = (row['expected_minutes'] as num?)?.toInt() ?? 0;
   final priority = (row['priority'] as num?)?.toInt() ?? 5;
@@ -891,33 +912,39 @@ Widget _settingsRow(BuildContext context, TaskListController c, String cmd) {
       children: [
         // ★ 休息走这一支（`countable=false`），所以下面那个"次数"框
         //   对它**不适用** —— 用这个"休息(分钟)"框代替，**同一个字段**。
+        //
+        // ★★ 也是**条目级**（修"改一条全变"）★★
+        //   用户裁定 乙-A: 休息是**真正的任务**, 分钟数 = `scheduler.target`。
+        //   ⚠ 但队列里可以加**多条**休息（"歇 10 分钟" + "歇 1 小时"）——
+        //     所以分钟数必须**按条目**存, 否则改一条 = 全变。
+        //   ★ 后端 `_rest_minutes()` 已经**优先读条目级**, 这里只是跟上。
         if (isRest) ...[
           Text('休息(分钟)', style: Theme.of(context).textTheme.labelSmall),
           _NumberCell(
-            key: ValueKey('q-rest-min-$cmd-$target'),
-            value: _restMinutesOf(c, cmd),
+            key: ValueKey('q-rest-min-$cmd-$target-$entryTarget'),
+            value: target > 0 ? target : _restMinutesOf(c, cmd),
             width: 60,
             hint: '分钟',
             min: 1,
             max: 24 * 60,
             onCommit: (n) async {
-              await c.setTarget(key, n);
-              await c.reload();
+              // ★ 写**这一条**的分钟（不再写任务级）
+              await c.setEntryTarget(entry, n);
             },
           ),
         ],
         if (countable) ...[
           Text('次数', style: Theme.of(context).textTheme.labelSmall),
           _NumberCell(
-            key: ValueKey('q-count-$cmd-$target'),
+            key: ValueKey('q-count-$cmd-$target-$entryTarget'),
             value: target,
             width: 60,
             hint: fallback == null ? '默认' : '默认 $fallback',
             min: 0,
             max: 999,
             onCommit: (n) async {
-              await c.setTarget(key, n);
-              await c.reload();
+              // ★★ 写**这一条**的次数（不再写任务级 —— 那会"改一条全变"）★★
+              await c.setEntryTarget(entry, n);
             },
           ),
         ],
