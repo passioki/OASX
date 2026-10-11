@@ -187,7 +187,7 @@ List<Widget> _queueSlivers(BuildContext context, TaskListController c) {
                 TextButton.icon(
                   onPressed: () => pickAndAddToQueue(context, c),
                   icon: const Icon(Icons.add, size: 16),
-                  label: Text('添加任务'
+                  label: Text('添加'
                       '${c.enabledNotQueuedTasks.isEmpty ? '' : ' (${c.enabledNotQueuedTasks.length})'}'),
                 ),
                 // ★★ ⑦: **一键清空队列**（带确认弹窗）★★
@@ -198,7 +198,7 @@ List<Widget> _queueSlivers(BuildContext context, TaskListController c) {
                 TextButton.icon(
                   onPressed: () => confirmClearQueue(context, c),
                   icon: const Icon(Icons.playlist_remove, size: 16),
-                  label: const Text('清空队列'),
+                  label: const Text('清空'),
                 ),
               ],
             ),
@@ -255,11 +255,17 @@ List<Widget> _queueSlivers(BuildContext context, TaskListController c) {
             //   经验妖怪/狭间暗域却**在界面上看不到**。
             Row(
               children: [
-                Text('执行顺序（拖 ⠿ 调整）',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: Theme.of(context).colorScheme.primary,
-                          fontWeight: FontWeight.w600,
-                        )),
+                // ★ 解释说明走 **Tooltip**（用户裁定："**解释说明用 tooltip 来展示**"）
+                //   —— 不在界面上占常驻空间
+                Tooltip(
+                  message: '拖动 ⠿ **调整执行顺序**\n'
+                      '★ 顺序由队列本身说了算 —— 拖到哪就按哪跑',
+                  child: Text('执行顺序',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: Theme.of(context).colorScheme.primary,
+                            fontWeight: FontWeight.w600,
+                          )),
+                ),
                 const SizedBox(width: 8),
                 Text('待执行 ${pending.length} · 未到开放时间 ${waiting.length}',
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
@@ -350,7 +356,7 @@ List<Widget> _queueSlivers(BuildContext context, TaskListController c) {
                   ),
                   TextButton(
                     onPressed: () => pickAndAddToQueue(context, c),
-                    child: const Text('去添加'),
+                    child: const Text('添加'),
                   ),
                 ],
               ),

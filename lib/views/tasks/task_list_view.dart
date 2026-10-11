@@ -1010,9 +1010,15 @@ class _ScheduleTab extends StatelessWidget with _GlobalPanelMixin {
                 label: const Text('停止脚本'),
               ),
             ),
-          const SizedBox(width: 8),
-          Text('（进程级；调度级软停在任务列表页的运行控制条）',
-              style: Theme.of(context).textTheme.labelSmall),
+          // ★ 解释说明走 **Tooltip**（用户裁定："解释说明用 tooltip 来展示"）
+          //   —— 原来这里是一句常驻的小字，白占横向空间
+          const SizedBox(width: 6),
+          Tooltip(
+            message: '这是**进程级**开关（硬停）。\n'
+                '★ **调度级软停**（暂停/继续）在**执行队列的队首行右侧**。',
+            child: Icon(Icons.info_outline,
+                size: 15, color: Theme.of(context).disabledColor),
+          ),
         ],
       );
     });
@@ -1074,7 +1080,7 @@ class _ScheduleTab extends StatelessWidget with _GlobalPanelMixin {
                     onPressed: () => c.selectInvert(), child: const Text('反选')),
                 OutlinedButton(
                     onPressed: () => c.selectListOnly(),
-                    child: const Text('只选列表里的')),
+                    child: const Text('选队列')),
                 const SizedBox(width: 8),
                 FilledButton(
                   onPressed: c.selected.isEmpty || c.busy
@@ -1660,11 +1666,11 @@ class _QueueTab extends StatelessWidget {
           //   从别的配置复制 = **把别的配置的某一页搬过来**（后端**不切**目标当前页）
           SimpleDialogOption(
             onPressed: () => Navigator.pop(ctx, 'transfer'),
-            child: const Text('从别的配置复制…'),
+            child: const Text('从别的配置复制'),
           ),
           SimpleDialogOption(
             onPressed: () => Navigator.pop(ctx, 'copy'),
-            child: const Text('复制这一页…'),
+            child: const Text('复制这一页'),
           ),
           SimpleDialogOption(
             onPressed: () => Navigator.pop(ctx, 'rename'),
@@ -1823,7 +1829,7 @@ class _QueueTab extends StatelessWidget {
                 onPressed: (fromConfig == null || profileId == null)
                     ? null
                     : () => Navigator.pop(ctx, true),
-                child: const Text('复制过来'),
+                child: const Text('复制'),
               ),
             ],
           );
@@ -2094,7 +2100,7 @@ class _QueueTab extends StatelessWidget {
                   '★ 只有你想"再来 N 轮"时才需要点它。',
               child: TextButton.icon(
                 icon: const Icon(Icons.restart_alt, size: 15),
-                label: const Text('重置循环计数'),
+                label: const Text('重置计数'),
                 style: TextButton.styleFrom(
                   visualDensity: VisualDensity.compact,
                   padding: const EdgeInsets.symmetric(horizontal: 6),

@@ -713,7 +713,7 @@ void _round4Tests() {
     expect(q.contains('未编排（共'), isFalse,
         reason: '旧的"未编排"标题应已删除');
     expect(q.contains('不在队列里'), isTrue, reason: '缺少指引文案');
-    expect(q.contains('去添加'), isTrue, reason: '缺少"去添加"入口');
+    expect(q.contains('添加'), isTrue, reason: '缺少「添加」入口');
   });
 
   testWidgets('★ 队列只渲染 queued 的任务（第 3 类不出现）', (tester) async {
@@ -735,7 +735,7 @@ void _round4Tests() {
     expect(find.text('个人突破'), findsNothing,
         reason: '启用但不在队列的次数任务不该出现在队列里（只在【添加任务】）');
     expect(find.textContaining('不在队列里'), findsOneWidget);
-    expect(find.text('去添加'), findsOneWidget);
+    expect(find.text('添加'), findsOneWidget);
   });
 
   // ============================================================ #6 吸顶（真渲染）
