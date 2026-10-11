@@ -654,3 +654,90 @@ PASS  ★ 退回后 next_run <= now（视作"待执行"）
 
 ★ 更新 `ConfigModel` 字段数断言（59 -> **60**），
   并在测试里**写清每个新字段的来历** —— 否则下一个人不知道该改哪个数。
+
+
+---
+
+# 附录 I：条目级「次数」—— 修「重复添加后改次数会同步」
+
+## I.1 用户报的 bug（原文）
+
+> "当前临时任务**重复添加**后，修改**次数/时间会同步到所有的同种任务**，
+>  而不是分开"
+
+## I.2 根因（架构层）
+
+"次数"原来只存在**任务级** `scheduler.target`:
+
+```
+module\server\schema_router.py:676   'target': sch.get('target', 0)
+tasks\base_task.py:133               target = int(getattr(sch, 'target', 0) or 0)
+```
+
+★ 而队列里同一任务可以有**多条条目**（用户用重复条目表达"重复跑整个任务"，
+各带自己的 `entry_id`）。
+⇒ 改一条的次数 = 改**任务级**字段 = **所有同任务条目一起变**。
+
+## I.3 用户裁定
+
+| # | 问题 | 裁定 |
+|---|---|---|
+| 1 | 任务级 `target` 保留为默认值？ | ★ **甲**（保留 —— 老配置不变, 等价于"给每条条目加一个覆盖值"）|
+| 2 | 条目级次数给谁用？ | ★ **所有条目** |
+
+## I.4 ★ 用户纠正了我的一个错误判断（记录在案）
+
+我原来问"周期任务要不要也支持条目级次数"，用户指正:
+
+> "定时任务是启用后**自动添加**进队列的，**不在添加任务池里**，
+>  应该无法被重复添加，**你是不是看错了**"
+
+★ **用户是对的**, 已实测证实:
+
+```
+GET /queue/candidates 规则 (schema_router.py:2378):
+    if _auto_queue_of(meta, config): continue      # ★ 自动进队列的【排除】
+实测: 候选池 11 个 -> 含 Exploration(临时任务) ✓
+                     ★ 不含 DemonEncounter(周期任务) ✓
+```
+
+## I.5 改动（照 `entry_id` 的同一条路）
+
+★ `entry_id` **已经是按条目独立传的**（`_order_by_queue()` 里 `deepcopy`
+  保证每条一个 `Function`）—— 所以 per-entry target 走**同一条路**即可。
+
+| # | 文件 | 改动 |
+|---|---|---|
+| 1 | `module/config/run_list.py` | `RunEntry` 新增 **`target`**; `to_dict` **非零才写**; `from_dict` 读它 |
+| 2 | `module/config/config.py` | `_order_by_queue()` 把该条目的 target 写进各自的 `Function.target` |
+| 3 | 同上 | `Function` 新增 `target`（`None` = 用任务级默认值）|
+| 4 | `tasks/base_task.py` | ★ `effective_target()` **优先用条目级**, 0/None 才回落任务级 |
+
+## I.6 实测（3/3 通过）
+
+```
+队列条目: Exploration(a, target=5) / Orochi(b) / Exploration(c, target=50)
+★ _order_by_queue 返回:
+    ('Exploration', 'a', 5)
+    ('Exploration', 'c', 50)
+PASS  ★ 两条同名条目的 entry_id 不同
+PASS  ★ 两条同名条目的 target 不同（5 与 50）
+PASS  ★ target 是按 entry_id 对应的
+★ 落盘: [{"task":"Exploration","entry_id":"a","target":5}, ...,
+         {"task":"Exploration","entry_id":"c","target":50}]
+        （`Orochi` 那条**没有** target 键 —— 非零才写）
+```
+
+## I.7 ⏳ 剩余（**下轮必做** —— 否则界面仍同步）
+
+★ 后端"**存**"与"**用**"已分离到条目级, 但**前端与 `/overview` 仍在任务级**:
+
+| # | 待做 | 位置 |
+|---|---|---|
+| 1 | `/overview` 的 `target` 改成**按条目**给 | `schema_router.py:676`（现在 `sch.get('target', 0)` 是任务级）|
+| 2 | 前端 `setTarget()` 写到**条目**而不是任务级 | `task_list_controller.dart`（现在走 `putScriptArg('script','optimization',...)`）|
+| 3 | ★ 迁移: 任务级 `scheduler.target` 分配给**各条目**（任务级保留为默认）| `config.py` |
+| 4 | 干净重建 + 部署 `D:\OASX-app` | — |
+
+⚠ 在此之前, **界面改次数仍会同步** ——
+  但**后端已能正确地"每条条目各用各的次数"**。
