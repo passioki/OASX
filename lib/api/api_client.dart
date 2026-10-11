@@ -688,13 +688,25 @@ class ApiClient {
   /// **新建一页**（后端把**当前** `run_list` 存为新页并切过去）。
   ///
   /// :param name: 可选; 不传则后端自动编号（`1` / `2` / `3` / …）
+  /// **新建一页**（歌单）。★ 也支持**复制**某一页（片 5 / F3）。
+  ///
+  /// ★ 用户要求：
+  /// > "目前对任务顺序配置页（歌单）的操作**少了一个复制**，后续需要添加这个功能"
+  ///
+  /// * `copyFrom` 为空 = 把**当前**状态存为新页（原行为）
+  /// * `copyFrom` = 源页 id = 以**那一页**为模板复制（★ 后端 `post_queue_profile`
+  ///   深拷贝它的快照，而不是读"当前状态"）
   Future<Map<String, dynamic>> createQueueProfile(
     String scriptName, {
     String? name,
+    String? copyFrom,
   }) async {
     final res = await request(() => post(
           '/$scriptName/queue/profiles',
-          data: {if (name != null && name.isNotEmpty) 'name': name},
+          data: {
+            if (name != null && name.isNotEmpty) 'name': name,
+            if (copyFrom != null && copyFrom.isNotEmpty) 'copy_from': copyFrom,
+          },
         ));
     return res.data ?? {};
   }

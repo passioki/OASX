@@ -1640,6 +1640,18 @@ class _QueueTab extends StatelessWidget {
       builder: (ctx) => SimpleDialog(
         title: Text('管理配置页「$name」'),
         children: [
+          // ★★★ 片 5 (F3a): 「复制」—— 用户要求补的功能 ★★★
+          //
+          // ★ 用户原话：
+          // > "目前对任务顺序配置页（歌单）的操作**少了一个复制**，
+          // >  后续需要添加这个功能"
+          //
+          // ★ 说明写清"复制的是什么"：整页快照（队列 + 启停/次数 + 全局开关），
+          //   与"新建"的区别只是模板来源（那一页 vs 当前状态）。
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'copy'),
+            child: const Text('复制这一页…'),
+          ),
           SimpleDialogOption(
             onPressed: () => Navigator.pop(ctx, 'rename'),
             child: const Text('重命名…'),
@@ -1656,11 +1668,70 @@ class _QueueTab extends StatelessWidget {
       ),
     );
     if (!context.mounted || action == null) return;
+    if (action == 'copy') {
+      await _copyProfile(context, c, id, name);
+      return;
+    }
     if (action == 'rename') {
       await _renameProfile(context, c, id, name);
       return;
     }
     await _deleteProfile(context, c, id, name);
+  }
+
+  /// ★ **复制当前页**（歌单）—— 片 5 / F3a。
+  ///
+  /// ★ 用户要求：
+  /// > "目前对任务顺序配置页（歌单）的操作**少了一个复制**，
+  /// >  后续需要添加这个功能"
+  ///
+  /// ★ 行为：以**这一页**的快照为模板，另存为一个**新页**并切过去
+  ///   （默认名 = 「<原名> 副本」，可在弹窗里改）。
+  /// ★ 与「新建」的区别：新建 = 存**当前状态**；复制 = 存**那一页**。
+  Future<void> _copyProfile(BuildContext context, TaskListController c,
+      String id, String name) async {
+    final ctrl = TextEditingController(text: '$name 副本');
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('复制配置页「$name」'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('会以**这一页**为模板，另存为一个**新页**并切过去。\n'
+                '复制的是**整页快照**：队列顺序 + 每任务启停/次数/优先级 + 全局开关。\n\n'
+                '★ **不会影响原页**，也不改任何任务配置。'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: '新配置页名字',
+                isDense: true,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('复制'),
+          ),
+        ],
+      ),
+    );
+    if (!context.mounted || newName == null) return;
+    final msg = await c.copyQueueProfile(id);
+    if (!context.mounted) return;
+    // ★ 与"新建/改名/删除"同款提示（本项目统一：底部弹出）
+    Get.snackbar('已复制配置页', msg,
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 4));
   }
 
   /// 删除当前页（★ 带二次确认 —— 后端保证至少留一页）。

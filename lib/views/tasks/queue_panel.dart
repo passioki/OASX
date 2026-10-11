@@ -739,6 +739,62 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                         ),
                       ),
                     ],
+                    // ★★★ 片 5 (F2b): 「**正在播放**」标记 —— ★ 在**正在跑的那一行**上 ★★★
+                    //
+                    // ## ★★ 用户裁定（原话）★★
+                    //
+                    // > "对于正在运行，就像是**音乐播放列表里的正在播放**一样，
+                    // >  **他不是排在队首的**，而是一种**状态按顺序变更**的"
+                    //
+                    // > "这种正在运行的状态**不是在[队首]**，而是在当前"播放列表"里
+                    // >  "正在播放"的"**音乐**"上，也就是说在当前"**正在运行**"的
+                    // >  "**任务**"上，而**切换任务顺序的各个配置页就是切换不同的歌单**。"
+                    //
+                    // ## 实现
+                    //
+                    // ★ 用 `c.runningTaskCommand`（后端 WebSocket 推的 `runningTask`）
+                    //   与**这一行的任务名**比 —— 相等才亮标记。
+                    // ★ 所以它**跟着任务走**：任务被拖到哪、标记就跟到哪；
+                    //   换歌单（配置页）后自然指向新歌单里正在跑的那一首。
+                    //
+                    // ⚠ 只对**任务行**显示（休息条目不会被"运行"）。
+                    if (isTask && cmd == c.runningTaskCommand) ...[
+                      Tooltip(
+                        message: '★ **正在播放** —— 当前正在运行的就是这一条。\n'
+                            '它**不是固定的第一行**：调度按播放模式推进，'
+                            '标记会跟着走到正在跑的那一条上。',
+                        child: Container(
+                          margin: const EdgeInsets.only(right: 6),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.play_arrow,
+                                  size: 13, color: Colors.green),
+                              const SizedBox(width: 2),
+                              Text(
+                                '正在播放',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelSmall
+                                    ?.copyWith(
+                                      color: Colors.green.shade800,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                    // ⚠ 这一行 `Flexible(` **必须留着** ——
+                    //   我第一次插标记时把它挤掉了, `flutter analyze` 立刻报
+                    //   `Undefined name 'child'`（下一个 widget 的 child 悬空）。
                     Flexible(
                       child: Text(
                         // ★★★ 休息任务的标题（用户裁定 乙-A）★★★

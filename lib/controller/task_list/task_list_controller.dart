@@ -644,14 +644,36 @@ class TaskListController extends GetxController with LogMixin {
   /// 新建一页（后端把**当前**队列存为新页并切过去）。
   ///
   /// :return 给用户看的**中文提示**（后端 `message`, 界面直接上屏）
-  Future<String> createQueueProfile({String? name}) async {
-    final res = await _api.createQueueProfile(scriptName, name: name);
+  Future<String> createQueueProfile({String? name, String? copyFrom}) async {
+    final res = await _api.createQueueProfile(scriptName,
+        name: name, copyFrom: copyFrom);
     if (res['ok'] == true) {
       await loadQueueProfiles();
       await reload();
       return '${res['message'] ?? '已新建配置页'}';
     }
     return '新建失败: ${res['error'] ?? '未知错误'}';
+  }
+
+  /// ★ **复制某一页**（歌单）—— 片 5 / F3。
+  ///
+  /// ★ 用户要求：
+  /// > "目前对任务顺序配置页（歌单）的操作**少了一个复制**，
+  /// >  后续需要添加这个功能"
+  ///
+  /// ★ 走**同一个端点**（`POST /queue/profiles` + `copy_from`），
+  ///   **不新开端点** —— 与"新建"的区别只是模板来源：
+  ///   新建 = 当前状态；复制 = **那一页的快照**。
+  ///
+  /// :return 给用户看的中文提示（后端 `message`）
+  Future<String> copyQueueProfile(String id) async {
+    final res = await _api.createQueueProfile(scriptName, copyFrom: id);
+    if (res['ok'] == true) {
+      await loadQueueProfiles();
+      await reload();
+      return '${res['message'] ?? '已复制配置页'}';
+    }
+    return '复制失败: ${res['error'] ?? '未知错误'}';
   }
 
   /// 切换到某一页。
