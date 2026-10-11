@@ -771,27 +771,59 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                     // ★ `running` 由后端按 **`running_entry_id`**（条目身份）判定
                     //   —— "**身份，不是位置**" ⇒ 标记**跟着任务走**，
                     //   与"第几行"无关（任务拖到哪它就跟到哪）。
+                    // ★★★ 片 11: 标记按【**调度状态**】显示（用户裁定"改"）★★★
+                    //
+                    // ## ★★ 为什么改 ★★
+                    //
+                    // 原来只看**脚本进程**（`ScriptState.running`）——
+                    // ★ 于是"**暂停调度后**（进程仍在跑）"标记**仍显示「运行中」**，
+                    //   与用户刚点的「暂停」矛盾。
+                    //
+                    // ## 现在三态
+                    //
+                    // | 条件 | 标记 |
+                    // |---|---|
+                    // | 脚本进程**没跑** | 【⏹ **已停止**】灰 |
+                    // | 进程在跑 + **调度已暂停** | 【⏸ **已暂停**】橙 |
+                    // | 进程在跑 + 调度未暂停 | 【▶ **运行中**】绿 |
                     if (isTask && e['running'] == true) ...[
-                      // ★ 脚本进程在跑 -> 运行中；没跑（被暂停/停止）-> 已暂停
                       Builder(builder: (ctx) {
                         final sm = _scriptModelOf(c);
                         final procRunning =
                             sm?.state.value == ScriptState.running;
-                        final running = procRunning;
+                        final paused = c.schedulerPaused;
+                        final String text;
+                        final Color color;
+                        final IconData icon;
+                        final String msg;
+                        if (!procRunning) {
+                          text = '已停止';
+                          color = Colors.blueGrey;
+                          icon = Icons.stop_circle_outlined;
+                          msg = '★ **已停止** —— 这一条是刚在跑的，'
+                              '但**脚本进程**已经停了。';
+                        } else if (paused) {
+                          text = '已暂停';
+                          color = Colors.orange;
+                          icon = Icons.pause_circle_outline;
+                          msg = '★ **已暂停** —— 调度被暂停了（跑完当前这一场'
+                              '就停手）。\n★ 点这一行的绿色 `[▶]` 可以**继续**。\n'
+                              '★ **队列顺序没有被改动**。';
+                        } else {
+                          text = '运行中';
+                          color = Colors.green;
+                          icon = Icons.play_arrow;
+                          msg = '★ **运行中** —— 当前正在运行的就是这一条。\n'
+                              '它**不是固定的第一行**：调度按播放模式推进，'
+                              '标记会跟着走到正在跑的那一条上。';
+                        }
                         return Tooltip(
-                          message: running
-                              ? '★ **运行中** —— 当前正在运行的就是这一条。\n'
-                                  '它**不是固定的第一行**：调度按播放模式推进，'
-                                  '标记会跟着走到正在跑的那一条上。'
-                              : '★ **已暂停** —— 这一条是刚在跑的，'
-                                  '但脚本进程已停（暂停调度 / 未启动）。',
+                          message: msg,
                           child: _queueBadge(
                             context,
-                            text: running ? '运行中' : '已暂停',
-                            color: running ? Colors.green : Colors.orange,
-                            icon: running
-                                ? Icons.play_arrow
-                                : Icons.pause_circle_outline,
+                            text: text,
+                            color: color,
+                            icon: icon,
                           ),
                         );
                       }),
