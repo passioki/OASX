@@ -554,7 +554,63 @@ class QueueRow extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => _queueRow(context, c, index);
+  Widget build(BuildContext context) {
+    // ★★★ 乙：**单行渲染失败不许炸整页**（修用户报的白屏）★★★
+    //
+    // ## ★★ 用户报的现象 + 他给的排查线索 ★★
+    //
+    // > "**执行顺序页面直接白屏了**"
+    // > "这个白屏是在**启动脚本之后**出现的，而且在**脚本停止后并不会消失**。
+    // >  **点击清理队列就会消失。**"
+    //
+    // ## 从时机推出来的结论
+    //
+    // ★ "清理队列就消失" ⇒ 由**某个队列条目**的渲染引起。
+    // ★ "启动脚本之后才出现" ⇒ 那个条目是**启动时 `build_queue()` 补进来的**
+    //   （★ 日志里就有 `已清理僵尸配置节点 ['orchi_moans']` ——
+    //    队列条目引用的任务节点**已不在配置里**，`/overview` 里查不到它）。
+    // ★ "脚本停止后不消失" ⇒ 它留在前端 `entries` 里（reload 来的，不随停止清）。
+    //
+    // ## 为什么测试查不出来
+    //
+    // ★ `analyze` 与 149 个测试用的都是**干净数据**；
+    //   而实机是**脏数据**（僵尸任务 / 后端版本差）⇒ 只有运行时才炸。
+    //
+    // ## 修法
+    //
+    // ★ 把**一行**的渲染包进 `try/catch`：
+    //   * 成功 -> 正常那行
+    //   * 失败 -> ★ 只显示一行「（这一条数据异常）」**提示 + 原因**，
+    //     **整页照常渲染** ⇒ ★ 再也不会白屏。
+    // ★ 这**不动任何业务逻辑**，纯粹是"脏数据护栏"。
+    try {
+      return _queueRow(context, c, index);
+    } catch (exc, stack) {
+      // ★ 打日志（release 版也会进 stderr）—— 便于下一次定位真实原因
+      debugPrint('QueueRow[$index] 渲染失败: $exc');
+      debugPrint('$stack');
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        child: Row(
+          children: [
+            Icon(Icons.error_outline,
+                size: 16, color: Theme.of(context).colorScheme.error),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                '（这一条数据异常，已跳过渲染） $exc',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+  }
 }
 
 /// ★ 队列行上的**状态小标记**（片 5 / F2c 抽出，三处共用）。
