@@ -185,6 +185,57 @@ class TaskListController extends GetxController with LogMixin {
 
   bool isQueueEmptyLoaded = false;
 
+  // ★★★ P-3b: 队列循环的「循环轮数」与「已跑轮数」（用户裁定）★★★
+  //
+  // 用户原话:
+  // > "我觉得选中后应该加一个**跑几次**的额外输入框, **0代表一直跑**,
+  // >   **1、2……代表跑几次**。"
+  // > "如果要重跑这几次循环要怎么设置呢 …… 是不是得有个**手动重置计数**
+  // >  的按钮" -> ★ 用户选 **乙**: 加按钮
+
+  /// 「循环轮数」—— **用户设置**（`0` = 一直跑）。
+  ///
+  /// ★ 只在**首次**从 `/schema` 读（与 `whenQueueEmpty` 同一理由:
+  ///   否则用户刚改完、下次刷新又被打回去）。
+  int loopTimes = 0;
+  bool isLoopTimesLoaded = false;
+
+  /// 「循环轮数」的界面标签（后端给中文，前端不维护映射）。
+  String get loopTimesLabel =>
+      '${schemaGlobalFields['loop_times']?['label'] ?? '循环轮数'}';
+
+  /// 「已跑轮数」—— ★ **只读进度**（后端 `task_state` 里，**存盘**）。
+  int get loopRoundsDone =>
+      (schemaGlobalFields['loop_rounds_done']?['current'] as num?)?.toInt() ?? 0;
+
+  /// 当前是不是"队列循环"模式 —— ★ 只在此时才显示轮数输入框与重置按钮。
+  bool get isQueueLoop => whenQueueEmpty == 'loop';
+
+  /// 写「循环轮数」（走既有通用接口，**不新开端点**）。
+  Future<void> setLoopTimes(int n) async {
+    loopTimes = n < 0 ? 0 : n;
+    update();
+    await _api.putScriptArg(scriptName, 'script', 'optimization',
+        'loop_times', 'integer', loopTimes);
+    await reload();
+  }
+
+  /// ★ **重置循环计数** —— 调新端点 `PUT /run_control/loop_reset`。
+  ///
+  /// ## 为什么是"清 0"而不是"设成 loop_times"
+  ///
+  /// 计数语义是"**已经跑了几轮**" —— 清 0 = "一轮都还没跑" = 可以再跑 N 轮。
+  /// ★ "设成 N" 会让 `已跑 >= 目标` 仍然成立 -> **还是不会跑**（是反的）。
+  Future<void> resetLoopRounds() async {
+    final res = await _api.resetLoopRounds(scriptName);
+    if (res.containsKey('error')) {
+      _snack('重置失败', '${res['error']}');
+      return;
+    }
+    _snack('已重置循环计数', '${res['message'] ?? '可以重新跑设定的轮数'}');
+    await reload();
+  }
+
   Map<String, dynamic> get schemaList =>
       (schema['list'] as Map?)?.cast<String, dynamic>() ?? {};
 

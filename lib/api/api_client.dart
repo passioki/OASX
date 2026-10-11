@@ -492,6 +492,25 @@ class ApiClient {
     return res.isSuccess && res.data is Map && !res.data.containsKey('error');
   }
 
+  /// ★★★ P-3b: **重置队列循环计数**（用户裁定 乙 —— 手动按钮）★★★
+  ///
+  /// ## 用户原话
+  ///
+  /// > "如果要重跑这几次循环要怎么设置呢，我没想好，
+  /// >  是不是得有个**手动重置计数到设定值的按钮**"
+  ///
+  /// ## 语义
+  ///
+  /// 把"**已经跑了几轮**"清 0 -> 于是又能跑满 `loop_times` 轮。
+  /// ★ 返回后端给的 `message`（含 `before -> rounds`），直接上屏。
+  ///
+  /// ⚠ 与 `resumeScript` 不同: 这里**要返回数据**（不是 `bool`）——
+  ///   因为界面要显示"重置前几轮"（用户点了才知道有效果）。
+  Future<Map<String, dynamic>> resetLoopRounds(String scriptName) async {
+    final res = await request(() => put('/$scriptName/run_control/loop_reset'));
+    return res.data ?? {};
+  }
+
   /// 休息 N 分钟(**全局**暂停, 定时任务也不跑)。`minutes=0` 取消。
   Future<bool> restScript(String scriptName, int minutes) async {
     final res = await request(() => put(

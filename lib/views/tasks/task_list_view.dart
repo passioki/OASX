@@ -1809,6 +1809,58 @@ class _QueueTab extends StatelessWidget {
               if (v != null) c.setWhenQueueEmpty(v);
             },
           ),
+          // ★★★ P-3b: 只在「队列循环」时显示 —— 循环轮数 + 重置计数 ★★★
+          //
+          // ## 用户裁定
+          //
+          // > "我觉得选中后应该加一个**跑几次**的额外输入框, **0代表一直跑**,
+          // >   **1、2……代表跑几次**。"
+          //
+          // > "如果要重跑这几次循环要怎么设置呢，我没想好，
+          // >  是不是得有个**手动重置计数到设定值的按钮**"
+          // > -> 用户选 **乙**: 加按钮
+          //
+          // ★ 为什么只在这个模式下显示: 轮数**只对 `loop` 有意义** ——
+          //   其它模式（回庭院/关游戏）没有"轮"的概念, 显示了只会让人困惑。
+          if (c.isQueueLoop) ...[
+            const SizedBox(width: 10),
+            Tooltip(
+              message: '${c.loopTimesLabel}\n'
+                  '0 = **一直跑**；1、2…… = 循环几轮后停下（回庭院待命）。\n'
+                  '★ 已跑 ${c.loopRoundsDone} 轮（存盘, 重启不丢）。',
+              child: Text('${c.loopTimesLabel}：',
+                  style: Theme.of(context).textTheme.bodySmall),
+            ),
+            _NumberCell(
+              // ★ key 里带当前值 -> 后端改了值时重建输入框（与其它 _NumberCell 同做法）
+              key: ValueKey('loop-times-${c.loopTimes}-${c.loopRoundsDone}'),
+              value: c.loopTimes,
+              width: 52,
+              hint: '0=一直跑',
+              min: 0,
+              max: 9999,
+              onCommit: (n) async {
+                await c.setLoopTimes(n);
+              },
+            ),
+            const SizedBox(width: 8),
+            // ★ 「重置循环计数」—— 清 0 已跑轮数 -> 又能跑满设定的轮数
+            Tooltip(
+              message: '把「已跑轮数」（现在 ${c.loopRoundsDone} 轮）清 0 —— '
+                  '于是又能跑满设定的「循环轮数」。\n'
+                  '★ 只有你想"再来 N 轮"时才需要点它。',
+              child: TextButton.icon(
+                icon: const Icon(Icons.restart_alt, size: 15),
+                label: const Text('重置循环计数'),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  minimumSize: const Size(0, 28),
+                ),
+                onPressed: c.resetLoopRounds,
+              ),
+            ),
+          ],
         ],
         // ★★ T1（审计修复）: 「优先级依据」四选一下拉**已删** ★★
         //
