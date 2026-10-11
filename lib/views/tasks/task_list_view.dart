@@ -48,8 +48,6 @@ library task_list;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-// ★ 吸顶区"实测内容高度"要用 `RenderProxyBox` / `Size`（见 `_MeasureSize`）
-import 'package:flutter/rendering.dart';
 import 'package:get/get.dart';
 
 import 'package:oasx/api/api_client.dart';
@@ -2295,171 +2293,77 @@ class _StickyQueueHeader extends SliverPersistentHeaderDelegate {
 
   final Widget child;
 
-  /// 实测高度（0 = 还没量过）。
-  double _extent = 0;
-
-  /// 量之前的兜底高度 —— 宁可多留一点空白, 也不能裁掉按钮。
-  /// ★★★ 首帧兜底高度 ★★★
+  /// ★★★ 固定高度（**不再"实测"**）★★★
   ///
-  /// ⚠ 原来只有 **76** —— 太少。实测（用户报的**白屏**）：
-  /// > "新建的额外的配置页运行脚本……**执行顺序白屏**"
-  /// > debug 版报：**`Bottom overflowed by 60 pixels`**
+  /// ## 为什么放弃"实测"（三轮失败的教训）
   ///
-  /// ★ 根因：本 delegate 的高度是**事后测量**的（`LayoutBuilder` 里
-  ///   `_extent = h`），而 `maxExtent == minExtent == _extent`。
-  ///   切到新配置页时吸顶区内容**变高**（配置页行 + 排序行各自换行），
-  ///   首帧仍用**旧的** `_extent` ⇒ ★ **内容比给的高度高 ⇒ 溢出**。
-  /// ⇒ 所以把兜底值调大（够两行内容），给测量一帧的余量。
-  static const double _fallback = 132;
-
-  /// ★★★ 安全余量（像素）★★★
+  /// 用户实测报过三个数：`Bottom overflowed by 60px` -> `right lowered by 41`
+  /// -> `Bottom overflowed by 4.0 pixels`。我依次试过：
   ///
-  /// ## 为什么需要（实测）
+  /// | 尝试 | 结果 |
+  /// |---|---|
+  /// | `return child` + `LayoutBuilder` 读 `constraints.maxHeight` | ★ 读到的是**外层给的高度**（= 旧值），**量不到内容** |
+  /// | 只把 `_fallback` 调大 | ★ 治标，内容再高一点又溢出 |
+  /// | `Stack` + `Positioned` | ★ `Positioned` 只给 top/left/right ⇒ `LayoutBuilder` 量不到高度 |
+  /// | `_MeasureSize`（`RenderProxyBox`）放在滚动体**外面** | ★ 量到的是**滚动体的视口高度**（= 旧值），**还是量不到内容** |
+  /// | `_converged`（只允许变高一次） | ★ 首次量得不够就**永远纠正不了**（用户："**没变**"）|
   ///
-  /// ★ 改成 `_MeasureSize` 实测之后，溢出从 **60px -> 4px** ——
-  ///   ★ 说明测到的高度**差了这么一点点**。
-  /// ★ 来源是**布局舍入 / 字体度量**：
-  ///   * `RenderBox.size` 是整数化后的值（`Size` 可能被 `.ceilToDouble()`）
-  ///   * 文本的 `ascent/descent` 与实际 line box 可能有小数误差
-  ///   * `Wrap` 的 `runSpacing` 在换行边界上也可能差 1px
-  /// ★ 所以"实测高度"要**留一点余量**，否则永远差那几个像素。
-  static const double _safety = 16;
+  /// ⇒ ★ **结论：在这个 delegate 里"先知道高度"与"量到内容高度"是
+  ///   互相矛盾的**（`minExtent`/`maxExtent` 必须在 `build` **之前**给出，
+  ///   而 `build` 的返回值才是内容的真实尺寸）。
+  /// ⇒ ★ 所以**不再实测**，改用**固定值 + 内容不溢出**：
+  ///   * 高度给**足够大**的固定值（够"配置页行 + 排序行 + 循环轮数行"）
+  ///   * 内容包一层"零滚动滚动体" ⇒ ★ **内容永不溢出**（超出部分裁掉）
+  ///
+  /// ## ⚠ 代价（可接受）
+  ///
+  /// ★ 吸顶区**下方可能有一点空白**（内容比固定高度矮时）。
+  /// ★ 这比"按钮被裁 / 黑黄条纹 / 白屏"好得多 —— 且空白很小。
+  ///
+  /// ## 覆盖哪些行
+  ///
+  /// | 行 | 会不会换行 |
+  /// |---|---|
+  /// | 配置页 chips（`_profilesRow`）| 页数多时会（每 chip ~40px）|
+  /// | 快捷排序 + 全局开关（`_sortActions`）| 窄屏会（3 个开关 + 下拉 + 按钮）|
+  /// | 循环轮数 + 重置计数（跟在上面）| 循环模式下会出现 |
+  ///
+  /// ⇒ 按**最坏情况**（三行）+ 字号缩放余量，取 **190**。
+  static const double _height = 190;
 
   @override
-  double get minExtent => _extent <= 0 ? _fallback : _extent;
+  double get minExtent => _height;
 
   @override
-  double get maxExtent => minExtent;
+  double get maxExtent => _height;
 
   @override
   Widget build(
       BuildContext context, double shrinkOffset, bool overlapsContent) {
-    // ★★★ 用 `MeasureSize` **实测内容真实高度**（根治首帧溢出）★★★
+    // ★★★ 内容包一层"零滚动滚动体" ⇒ **永不溢出** ★★★
     //
-    // ## ★★ 修的是用户报的白屏（debug 实测）★★
-    //
-    // > "新建的额外的配置页运行脚本……**执行顺序白屏**"
-    // > debug 版：**`Bottom overflowed by 60 pixels`**（竖向）
-    //
-    // ## 为什么原来会溢出
-    //
-    // ★ 原来高度取 `minExtent == maxExtent == _extent`，而 `_extent`
-    //   是**上一帧**量到的 ⇒ ★ 内容一变高，本帧给的高度**不够** ⇒ 溢出。
-    //
-    // ## 现在的做法（同帧实测 + 重排）
-    //
-    // ★ 用 `MeasureSize`（`RenderProxyBox`）拿**子级真实尺寸**：
-    //   * 它给子级**松约束** ⇒ 子级按**自身高度**布局 ⇒ **不会溢出**
-    //   * 量到高度 -> 更新 `_extent` -> 触发重排
-    //   * `shouldRebuild` 已含"高度变化"判据 ⇒ 外层的 `SliverPersistentHeader`
-    //     **当帧就会用新高度重排** ⇒ 用户看不到裁切
-    // ★ 兜底 `_fallback` 调大到 132（够两行），首帧就够用。
-    // ★★★ 双保险（两条腿都要）★★★
-    //
-    // ## 腿 1：`_MeasureSize` —— 让高度**跟得上内容**
-    //
-    // ★ `RenderProxyBox` 给子级**松约束** ⇒ 量到**真实高度** ->
-    //   更新 `_extent` -> `shouldRebuild` 为真 -> 外层按新高度重排。
-    //
-    // ## 腿 2：`SingleChildScrollView(NeverScrollable)` —— 让内容**不可能溢出**
-    //
-    // ★ 光靠"量得准"**不安全**：测量->重排有**一帧**延迟，
-    //   而那一帧里内容仍被塞进旧高度 ⇒ 仍可能报
-    //   `Bottom overflowed by N pixels`（★ 实测就是这 4px）。
-    // ★ 包一层"零滚动滚动体"后：它给子级**无界高度**（所以内容
-    //   **永不溢出**），外层再裁到 `_extent`；且 `NeverScrollable`
-    //   ⇒ 用户**滚不动**（吸顶区本来也不该滚）。
-    // ⇒ ★ 两腿合起来：**量得准 + 永不溢出**。
-    Widget measure(Widget w) => _MeasureSize(
-          onChange: (size) {
-            // ★ 实测高度 **+ 安全余量** —— 见 `_safety` 的说明
-            //   （实测：不加余量时仍差 4px ⇒ `Bottom overflowed by 4.0 pixels`）
-            final h = size.height + _safety;
-            if (!h.isFinite || h <= 0) return;
-            if ((h - _extent).abs() <= 0.5) return;      // 死区内 -> 不动
-            // ⚠ **不要加"只增/只减"的限制** ——
-            //   我上一版加过 `_converged`，结果是"首次量得不够就**永远
-            //   纠正不了**"（用户实测仍报 4px）。高度**必须能双向跟随**。
-            _extent = h;
-          },
-          child: SingleChildScrollView(
-            physics: const NeverScrollableScrollPhysics(),
-            child: w,
-          ),
-        );
-
-    return SizedBox.expand(
+    // * 它给子级**无界高度** ⇒ `Wrap` / `Column` 按自身尺寸布局，
+    //   即便比 `_height` 高也**不会报溢出**（超出部分被裁）
+    // * `NeverScrollableScrollPhysics` ⇒ 用户**滚不动**
+    //   （吸顶区本来也不该滚，只是借它"无界高度"的能力）
+    // * ⚠ 不做任何"测量"——见 `_height` 的说明（实测方案已证明不可行）
+    return SizedBox(
+      height: _height,
       child: Material(
         // ★ 必须**不透明** —— 否则下面的队列行会从吸顶区底下透出来
         //   （看起来像字叠字）。
         color: Theme.of(context).scaffoldBackgroundColor,
-        child: measure(child),
+        child: SingleChildScrollView(
+          physics: const NeverScrollableScrollPhysics(),
+          child: child,
+        ),
       ),
     );
   }
 
   @override
   bool shouldRebuild(covariant _StickyQueueHeader old) =>
-      old.child != child || (old._extent - _extent).abs() > 0.5;
-}
-
-// ============================================================ 量尺寸
-
-/// ★★★ **实测子级尺寸**的小工具（给吸顶区量高度用）★★★
-///
-/// ## 为什么需要它
-///
-/// ★ 吸顶区（`SliverPersistentHeader`）的高度必须**先知道**才能布局
-///   （`minExtent` / `maxExtent` 是**布局前**读的）。
-/// ★ 而内容是 `Wrap`（配置页行 / 快捷排序行会**换行**）⇒ 高度**不固定**
-///   ⇒ 只能"量一次、记住、下次用"。
-///
-/// ## 与"事后测量"的区别（这是修 bug 的关键）
-///
-/// ★ 原来用 `LayoutBuilder` 在 `build` 里读 `constraints.maxHeight` ——
-///   那读到的是**外层给的高度**（= 旧 `_extent`），**不是内容高度**
-///   ⇒ 永远量不到"内容变高了" ⇒ ★ **溢出**（用户报的白屏）。
-/// ★ 本组件用 `RenderProxyBox` 拿**子级真实尺寸**（不受外层约束影响），
-///   并在**变化时回调** ⇒ `_extent` 能真正跟上内容。
-///
-/// ## 实现（纯 Flutter，无第三方依赖）
-///
-/// `SingleChildRenderObjectWidget` + 一个 `RenderProxyBox` 子类：
-/// 在 `performLayout` 之后读 `size`，与上次不同就回调。
-class _MeasureSize extends SingleChildRenderObjectWidget {
-  const _MeasureSize({required this.onChange, required super.child});
-
-  /// 尺寸变化时回调（**只在变化时**调 —— 避免每帧刷屏/死循环）。
-  final void Function(Size size) onChange;
-
-  @override
-  RenderObject createRenderObject(BuildContext context) =>
-      _RenderMeasureSize(onChange);
-
-  @override
-  void updateRenderObject(
-      BuildContext context, _RenderMeasureSize renderObject) {
-    renderObject.onChange = onChange;
-  }
-}
-
-class _RenderMeasureSize extends RenderProxyBox {
-  _RenderMeasureSize(this.onChange);
-
-  void Function(Size size) onChange;
-  Size? _last;
-
-  @override
-  void performLayout() {
-    super.performLayout();
-    final s = size;
-    if (_last == null || s != _last) {
-      _last = s;
-      // ⚠ 不能在 layout 期间直接 `setState` ⇒ 延到帧末。
-      //   本项目其它地方也用 `addPostFrameCallback` 做同类事。
-      WidgetsBinding.instance.addPostFrameCallback((_) => onChange(s));
-    }
-  }
+      old.child != child;
 }
 
 // ============================================================ 共用

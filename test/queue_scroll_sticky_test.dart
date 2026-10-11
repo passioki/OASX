@@ -139,26 +139,28 @@ void main() {
               '它们就是用户说的"上边的按钮和展示"');
     });
 
-    test('吸顶区高度**实测**, 不写死（字号缩放 / Wrap 折行都不裁按钮）', () {
+    test('吸顶区：固定高度 + 内容**永不溢出**（三轮实测后的最终方案）', () {
       final view = codeOnly('lib/views/tasks/task_list_view.dart');
       expect(view.contains('class _StickyQueueHeader'), isTrue,
           reason: '★ 缺 `SliverPersistentHeaderDelegate` 实现');
       final i = view.indexOf('class _StickyQueueHeader');
       final body = view.substring(i, (i + 4200).clamp(0, view.length));
-      // ★ 高度必须是**实测**的 —— 写死会在字号变大 / 窄屏 `Wrap` 折行时裁按钮。
-      //   ⚠ 实现换过：原来用 `LayoutBuilder` 读 `constraints.maxHeight`
-      //     —— ★ 那读到的是【外层给的高度】而不是【内容高度】**量不到真实值**
-      //       ⇒ 内容变高 ⇒ 溢出（用户报的白屏，debug: Bottom overflowed 60px）。
-      //     现在用 `_MeasureSize`（`RenderProxyBox`）拿**子级真实尺寸**。
-      expect(body.contains('_MeasureSize') || body.contains('LayoutBuilder'),
-          isTrue,
-          reason: '★ 高度必须**实测**（`_MeasureSize` / `LayoutBuilder`）—— '
-              '写死会在系统字号变大 / 窄屏 `Wrap` 折行时**裁掉按钮**');
+      // ★★★ 三轮实测的结论（用户实测报过 60px / 41px / 4px 溢出）★★★
+      //
+      // "先知道高度"（minExtent/maxExtent 在 build 之前）与"量到内容高度"
+      // （build 的返回值才有真实尺寸）**互相矛盾** —— 试过：
+      //   LayoutBuilder 读 constraints（量到外层高度）
+      //   / Stack+Positioned（量不到） / _MeasureSize 放滚动体外（量到视口）
+      //   / _converged 只增不减（首次不够就永远纠正不了）
+      // ⇒ ★ 最终方案：**固定高度 + 内容包零滚动体**（内容超出就裁掉，绝不报溢出）
+      expect(body.contains('_height'), isTrue,
+          reason: '★ 吸顶区高度应为**固定值** `_height`（实测方案已证明不可行）');
+      expect(body.contains('NeverScrollableScrollPhysics'), isTrue,
+          reason: '★ 内容必须包"零滚动滚动体" —— 它给子级**无界高度** ⇒ '
+              '内容超出固定高度时**不报溢出**（这才是"永不白屏"的保证）');
       expect(body.contains('minExtent') && body.contains('maxExtent'), isTrue,
           reason: '★ delegate 必须给出 min/maxExtent');
-      // ★ 兜底高度要**够两行**（配置页行 + 排序行各自可能换行）
-      expect(body.contains('_fallback'), isTrue,
-          reason: '★ 首帧兜底高度必须存在（量之前先用它）');
+      expect(body.contains('shouldRebuild'), isTrue);
     });
   });
 }
