@@ -183,6 +183,13 @@ class TaskListController extends GetxController with LogMixin {
   String get queueEmptyLabel =>
       '${schemaGlobalFields['when_task_queue_empty']?['label'] ?? '队列跑空后'}';
 
+  /// ★ 片 6/⑥: 该字段的**悬停说明**（也来自 `/schema` —— 不硬编码）。
+  ///
+  /// ★ 用户: "去掉括号内的解释说明，即使要说明也应该是指针**悬停**说明"。
+  /// ★ 每个选项的说明在 `choices[].hint`（同样来自后端）。
+  String get queueEmptyHelp =>
+      '${schemaGlobalFields['when_task_queue_empty']?['help'] ?? ''}';
+
   bool isQueueEmptyLoaded = false;
 
   // ★★★ P-3b: 队列循环的「循环轮数」与「已跑轮数」（用户裁定）★★★

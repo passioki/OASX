@@ -2016,32 +2016,41 @@ class _QueueTab extends StatelessWidget {
         // 后端**真实支持**的字段（原型的"跑完循环整表"后端没有,
         // 见 `task_list_controller` 里的说明）。
         if (c.queueEmptyChoices.isNotEmpty) ...[
+          // ★★★ ⑥: 「播放模式」**只留下拉**（用户裁定）★★★
+          //
+          // > "现在:  播放模式  [顺序（跑一次就停，回庭院） ▾]
+          // >  改成:            [顺序 ▾]     ← **只留下拉，去掉括号内的解释说明**，
+          // >  即使要说明也应该是指针**悬停**说明"
+          //
+          // ★ 所以这里**不再画「播放模式」这四个字** —— 只有下拉；
+          //   label 与每个选项的解释都走 **Tooltip（指针悬停）**。
+          // ★ 选项文字由后端给短词（`顺序` / `循环` / `乱序`），
+          //   每个选项的 `hint` 也由后端给 ⇒ 改文案不用动前端。
           Tooltip(
-            message: '${c.queueEmptyLabel}\n'
-                '队列跑完之后做什么。\n'
-                '★ 可选值由后端 `/schema` 给出（不在前端硬编码）。',
-            child: Text(c.queueEmptyLabel,
-                style: Theme.of(context).textTheme.bodySmall),
-          ),
-          const SizedBox(width: 6),
-          DropdownButton<String>(
-            value: c.queueEmptyChoices
-                    .any((e) => '${e['value']}' == c.whenQueueEmpty)
-                ? c.whenQueueEmpty
-                : '${c.queueEmptyChoices.first['value']}',
-            isDense: true,
-            underline: const SizedBox.shrink(),
-            style: Theme.of(context).textTheme.bodySmall,
-            items: [
-              for (final e in c.queueEmptyChoices)
-                DropdownMenuItem<String>(
-                  value: '${e['value']}',
-                  child: Text('${e['label']}'),
-                ),
-            ],
-            onChanged: (v) {
-              if (v != null) c.setWhenQueueEmpty(v);
-            },
+            message: '${c.queueEmptyLabel}\n\n${c.queueEmptyHelp}',
+            child: DropdownButton<String>(
+              value: c.queueEmptyChoices
+                      .any((e) => '${e['value']}' == c.whenQueueEmpty)
+                  ? c.whenQueueEmpty
+                  : '${c.queueEmptyChoices.first['value']}',
+              isDense: true,
+              underline: const SizedBox.shrink(),
+              style: Theme.of(context).textTheme.bodySmall,
+              items: [
+                for (final e in c.queueEmptyChoices)
+                  DropdownMenuItem<String>(
+                    value: '${e['value']}',
+                    // ★ 每个选项**各自**的悬停说明（也来自后端）
+                    child: Tooltip(
+                      message: '${e['hint'] ?? e['label']}',
+                      child: Text('${e['label']}'),
+                    ),
+                  ),
+              ],
+              onChanged: (v) {
+                if (v != null) c.setWhenQueueEmpty(v);
+              },
+            ),
           ),
           // ★★★ P-3b: 只在「队列循环」时显示 —— 循环轮数 + 重置计数 ★★★
           //
