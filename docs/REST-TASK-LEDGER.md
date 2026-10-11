@@ -728,16 +728,31 @@ PASS  ★ target 是按 entry_id 对应的
         （`Orochi` 那条**没有** target 键 —— 非零才写）
 ```
 
-## I.7 ⏳ 剩余（**下轮必做** —— 否则界面仍同步）
+## I.7 ✅ 前端部分已完成（OASX `8bd8bc2`）
 
-★ 后端"**存**"与"**用**"已分离到条目级, 但**前端与 `/overview` 仍在任务级**:
+★ **核实后修正了原计划**（不猜、按代码事实）:
 
-| # | 待做 | 位置 |
-|---|---|---|
-| 1 | `/overview` 的 `target` 改成**按条目**给 | `schema_router.py:676`（现在 `sch.get('target', 0)` 是任务级）|
-| 2 | 前端 `setTarget()` 写到**条目**而不是任务级 | `task_list_controller.dart`（现在走 `putScriptArg('script','optimization',...)`）|
-| 3 | ★ 迁移: 任务级 `scheduler.target` 分配给**各条目**（任务级保留为默认）| `config.py` |
-| 4 | 干净重建 + 部署 `D:\OASX-app` | — |
+| 原计划 | 实际核实结果 |
+|---|---|
+| ① "`/overview` 的 `target` 改成按条目给" | ★ **不需要** —— 前端读次数的正确来源是 `GET /run_list` 的 `entries`（**已经带 `target`**，后端 `48b2f7b5` 加的）。`/overview` 的 `target` 是**任务级默认值**, 在**总览页**用, 那里本就该是任务级 |
+| ② "前端 `setTarget()` 写到条目" | ✅ **已做** —— 新增 `entryTargetOf()` / `setEntryTarget()`, 走**已有的** `PUT /run_list`（不新开端点）|
+| ③ "迁移: 任务级 target 分配给各条目" | ✅ **已提供工具** —— `seedEntryTargetsFromTaskLevel()`（只灌**还没设过**的条目, 不覆盖用户已设的）|
+| ④ 干净重建 + 部署 | ✅ **已做** —— `app.so 5CA0E543` |
 
-⚠ 在此之前, **界面改次数仍会同步** ——
-  但**后端已能正确地"每条条目各用各的次数"**。
+### 前端改动
+
+* `task_list_controller.dart`: `entryTargetOf()` / `setEntryTarget()` /
+  `seedEntryTargetsFromTaskLevel()`
+* `queue_panel.dart`: `_settingsRow(context, c, cmd)` ->
+  **`_settingsRow(context, c, cmd, entry)`**
+  * 次数框 `value` = `entry['target'] > 0 ? 该值 : 任务级默认值`
+  * `onCommit` -> ★ **`c.setEntryTarget(entry, n)`**（不再写任务级）
+  * ★ **休息那支一并改**: 队列里可以加**多条**休息
+    （"歇 10 分钟" + "歇 1 小时"）, 后端 `_rest_minutes()` 已优先读条目级
+* **有意不改**: `task_row_view.dart:365` 的 `setTarget` 保留任务级 ——
+  那是**总览页**（按**任务**列出）, 在那里改的本来就该是"该任务的默认次数"
+
+### ⚠ 部署前提
+
+★ **必须重启后端** —— 条目级 `target` 的后端部分（`48b2f7b5`）晚于
+  上一次后端启动时间, 不重启则**后端仍按任务级处理**。
