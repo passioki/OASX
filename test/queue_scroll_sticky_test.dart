@@ -144,12 +144,21 @@ void main() {
       expect(view.contains('class _StickyQueueHeader'), isTrue,
           reason: '★ 缺 `SliverPersistentHeaderDelegate` 实现');
       final i = view.indexOf('class _StickyQueueHeader');
-      final body = view.substring(i, (i + 3000).clamp(0, view.length));
-      expect(body.contains('LayoutBuilder'), isTrue,
-          reason: '★ 高度必须**实测**（`LayoutBuilder`）—— '
+      final body = view.substring(i, (i + 4200).clamp(0, view.length));
+      // ★ 高度必须是**实测**的 —— 写死会在字号变大 / 窄屏 `Wrap` 折行时裁按钮。
+      //   ⚠ 实现换过：原来用 `LayoutBuilder` 读 `constraints.maxHeight`
+      //     —— ★ 那读到的是【外层给的高度】而不是【内容高度】**量不到真实值**
+      //       ⇒ 内容变高 ⇒ 溢出（用户报的白屏，debug: Bottom overflowed 60px）。
+      //     现在用 `_MeasureSize`（`RenderProxyBox`）拿**子级真实尺寸**。
+      expect(body.contains('_MeasureSize') || body.contains('LayoutBuilder'),
+          isTrue,
+          reason: '★ 高度必须**实测**（`_MeasureSize` / `LayoutBuilder`）—— '
               '写死会在系统字号变大 / 窄屏 `Wrap` 折行时**裁掉按钮**');
       expect(body.contains('minExtent') && body.contains('maxExtent'), isTrue,
           reason: '★ delegate 必须给出 min/maxExtent');
+      // ★ 兜底高度要**够两行**（配置页行 + 排序行各自可能换行）
+      expect(body.contains('_fallback'), isTrue,
+          reason: '★ 首帧兜底高度必须存在（量之前先用它）');
     });
   });
 }

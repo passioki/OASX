@@ -48,6 +48,8 @@ library task_list;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+// ★ 吸顶区"实测内容高度"要用 `RenderProxyBox` / `Size`（见 `_MeasureSize`）
+import 'package:flutter/rendering.dart';
 import 'package:get/get.dart';
 
 import 'package:oasx/api/api_client.dart';
@@ -2319,44 +2321,42 @@ class _StickyQueueHeader extends SliverPersistentHeaderDelegate {
   @override
   Widget build(
       BuildContext context, double shrinkOffset, bool overlapsContent) {
+    // ★★★ 用 `MeasureSize` **实测内容真实高度**（根治首帧溢出）★★★
+    //
+    // ## ★★ 修的是用户报的白屏（debug 实测）★★
+    //
+    // > "新建的额外的配置页运行脚本……**执行顺序白屏**"
+    // > debug 版：**`Bottom overflowed by 60 pixels`**（竖向）
+    //
+    // ## 为什么原来会溢出
+    //
+    // ★ 原来高度取 `minExtent == maxExtent == _extent`，而 `_extent`
+    //   是**上一帧**量到的 ⇒ ★ 内容一变高，本帧给的高度**不够** ⇒ 溢出。
+    //
+    // ## 现在的做法（同帧实测 + 重排）
+    //
+    // ★ 用 `MeasureSize`（`RenderProxyBox`）拿**子级真实尺寸**：
+    //   * 它给子级**松约束** ⇒ 子级按**自身高度**布局 ⇒ **不会溢出**
+    //   * 量到高度 -> 更新 `_extent` -> 触发重排
+    //   * `shouldRebuild` 已含"高度变化"判据 ⇒ 外层的 `SliverPersistentHeader`
+    //     **当帧就会用新高度重排** ⇒ 用户看不到裁切
+    // ★ 兜底 `_fallback` 调大到 132（够两行），首帧就够用。
+    Widget measure(Widget w) => _MeasureSize(
+          onChange: (size) {
+            final h = size.height;
+            if (h.isFinite && h > 0 && (h - _extent).abs() > 0.5) {
+              _extent = h;
+            }
+          },
+          child: w,
+        );
+
     return SizedBox.expand(
       child: Material(
         // ★ 必须**不透明** —— 否则下面的队列行会从吸顶区底下透出来
         //   （看起来像字叠字）。
         color: Theme.of(context).scaffoldBackgroundColor,
-        // ★★★ 用"零滚动滚动体"包住内容 ⇒ **永不溢出** ★★★
-        //
-        // ## ★★ 修的是用户报的白屏（实测 `Bottom overflowed by 60 pixels`）★★
-        //
-        // ★ 本 delegate 的高度是**事后测量**的（下面 `LayoutBuilder` 里
-        //   `_extent = h`），而 `maxExtent == minExtent == _extent` ——
-        //   ★ 所以"内容变高"的首帧，给的高度**还是旧的** ⇒ 溢出。
-        // ★ 原来直接 `return child`：`Column` 拿到**上限 = 旧高度**的紧约束
-        //   ⇒ 内容更高就报 `RenderFlex overflowed`（debug 画黑黄条纹、
-        //   ★ release 版看起来就是**整块白掉**）。
-        //
-        // ## 为什么用 `SingleChildScrollView(physics: NeverScrollable…)`
-        //
-        // ★ 它给子级**无界高度** ⇒ `Column` **不可能溢出**
-        //   （内容按自身尺寸布局，超出部分被裁掉，**不报错**）。
-        // ★ 且 `physics: NeverScrollable` ⇒ 用户**滚不动**（它就是吸顶区，
-        //   本来也不该滚）—— 只是借它"无界高度"的能力。
-        // ★ 下一帧 `LayoutBuilder` 量到新高度 -> `_extent` 更新
-        //   -> 高度匹配 -> 一切正常（不再裁任何东西）。
-        child: SingleChildScrollView(
-          physics: const NeverScrollableScrollPhysics(),
-          child: LayoutBuilder(
-            builder: (ctx, constraints) {
-              final h = constraints.maxHeight;
-              // ★ 只在"量到的和已有的不一样"时写 —— 避免每帧都改,
-              //   那会让 `shouldRebuild` 永远为真（无谓重建）。
-              if (h.isFinite && h > 0 && (h - _extent).abs() > 0.5) {
-                _extent = h;
-              }
-              return child;
-            },
-          ),
-        ),
+        child: measure(child),
       ),
     );
   }
@@ -2364,6 +2364,65 @@ class _StickyQueueHeader extends SliverPersistentHeaderDelegate {
   @override
   bool shouldRebuild(covariant _StickyQueueHeader old) =>
       old.child != child || (old._extent - _extent).abs() > 0.5;
+}
+
+// ============================================================ 量尺寸
+
+/// ★★★ **实测子级尺寸**的小工具（给吸顶区量高度用）★★★
+///
+/// ## 为什么需要它
+///
+/// ★ 吸顶区（`SliverPersistentHeader`）的高度必须**先知道**才能布局
+///   （`minExtent` / `maxExtent` 是**布局前**读的）。
+/// ★ 而内容是 `Wrap`（配置页行 / 快捷排序行会**换行**）⇒ 高度**不固定**
+///   ⇒ 只能"量一次、记住、下次用"。
+///
+/// ## 与"事后测量"的区别（这是修 bug 的关键）
+///
+/// ★ 原来用 `LayoutBuilder` 在 `build` 里读 `constraints.maxHeight` ——
+///   那读到的是**外层给的高度**（= 旧 `_extent`），**不是内容高度**
+///   ⇒ 永远量不到"内容变高了" ⇒ ★ **溢出**（用户报的白屏）。
+/// ★ 本组件用 `RenderProxyBox` 拿**子级真实尺寸**（不受外层约束影响），
+///   并在**变化时回调** ⇒ `_extent` 能真正跟上内容。
+///
+/// ## 实现（纯 Flutter，无第三方依赖）
+///
+/// `SingleChildRenderObjectWidget` + 一个 `RenderProxyBox` 子类：
+/// 在 `performLayout` 之后读 `size`，与上次不同就回调。
+class _MeasureSize extends SingleChildRenderObjectWidget {
+  const _MeasureSize({required this.onChange, required super.child});
+
+  /// 尺寸变化时回调（**只在变化时**调 —— 避免每帧刷屏/死循环）。
+  final void Function(Size size) onChange;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderMeasureSize(onChange);
+
+  @override
+  void updateRenderObject(
+      BuildContext context, _RenderMeasureSize renderObject) {
+    renderObject.onChange = onChange;
+  }
+}
+
+class _RenderMeasureSize extends RenderProxyBox {
+  _RenderMeasureSize(this.onChange);
+
+  void Function(Size size) onChange;
+  Size? _last;
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    final s = size;
+    if (_last == null || s != _last) {
+      _last = s;
+      // ⚠ 不能在 layout 期间直接 `setState` ⇒ 延到帧末。
+      //   本项目其它地方也用 `addPostFrameCallback` 做同类事。
+      WidgetsBinding.instance.addPostFrameCallback((_) => onChange(s));
+    }
+  }
 }
 
 // ============================================================ 共用
