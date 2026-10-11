@@ -2143,17 +2143,41 @@ class _QueueTab extends StatelessWidget {
     final f = c.globalField(key);
     final label = '${f['label'] ?? fallbackLabel}';
     final help = '${f['help'] ?? ''}';
+    // ★★★ L2 开关：**图标 + 短文字**（用户设计图 `▣启用周期 ▣启用临时`）★★★
+    //
+    // ## ★★ 用户裁定 ★★
+    //
+    // > "其它功能按钮的文字也要像我上条发你那样**简洁**哈，**节省UI空间**"
+    // > "解释说明用 **tooltip** 来展示"
+    // > "L2 **休息时可穿插**"
+    //
+    // ★ 原来这里**只有一个开关图标**（label 只藏在 Tooltip 里）——
+    //   用户看不到"这个开关是干什么的"。
+    // ★ 现在 = **图标 + 短文字**；文字由后端给（`临时` / `周期` / `休息时可穿插`），
+    //   完整解释仍在 **Tooltip**（不占常驻空间）。
     return Tooltip(
       message: help.isEmpty ? label : '$label\n$help',
-      child: IconButton(
-        visualDensity: VisualDensity.compact,
-        padding: EdgeInsets.zero,
-        constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
-        onPressed: () => onChanged(),
-        icon: Icon(
-          value ? Icons.toggle_on : Icons.toggle_off,
-          size: 24,
-          color: value ? scheme.primary : scheme.outline,
+      child: InkWell(
+        onTap: () => onChanged(),
+        borderRadius: BorderRadius.circular(4),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                value ? Icons.toggle_on : Icons.toggle_off,
+                size: 24,
+                color: value ? scheme.primary : scheme.outline,
+              ),
+              const SizedBox(width: 2),
+              Text(label,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: value ? scheme.primary : scheme.outline,
+                        fontWeight: FontWeight.w600,
+                      )),
+            ],
+          ),
         ),
       ),
     );
