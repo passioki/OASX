@@ -655,8 +655,36 @@ class TaskListController extends GetxController with LogMixin {
     return '新建失败: ${res['error'] ?? '未知错误'}';
   }
 
-  /// ★ **复制某一页**（歌单）—— 片 5 / F3。
+  /// ★★★ 片 5 (F2d): **让某一条条目立刻运行**（队列行的「▶ 播放」）★★★
   ///
+  /// > 用户: "我还想添加一个按钮，**每个队列里的任务都有一个播放按钮**，
+  /// >  点一下就可以**切换成正在运行**。"
+  ///
+  /// ★ 后端把该条目的 `next_run` 拉到现在（与"乱序"同一手法）——
+  ///   **不改调度核心**，调度器下一轮自然选它。
+  /// ★ 返回**后端原话**（成功或失败原因都要上屏 ——
+  ///   尤其"当前不可跑"必须让用户看见，不能静默）。
+  Future<String> playEntry(String entryId) async {
+    if (playingEntry == true) return '上一条还在处理…';
+    playingEntry = true;
+    update();
+    try {
+      final res = await _api.playEntry(scriptName, entryId);
+      if (res['ok'] == true) {
+        await reload();
+        return '✓ ${res['message'] ?? '已排到最前'}';
+      }
+      return '${res['error'] ?? '未知错误'}';
+    } finally {
+      playingEntry = false;
+      update();
+    }
+  }
+
+  /// ★ 正在处理"播放"请求（防止连点）。
+  bool? playingEntry = false;
+
+  /// ★ **复制某一页**（歌单）—— 片 5 / F3。
   /// ★ 用户要求：
   /// > "目前对任务顺序配置页（歌单）的操作**少了一个复制**，
   /// >  后续需要添加这个功能"
@@ -2152,6 +2180,27 @@ class TaskListController extends GetxController with LogMixin {
 
   /// 排序请求进行中（禁用两个按钮, 防连点）。
   bool sortingQueue = false;
+
+  /// ★★★ 片 5 (F2f): 「快捷排序」是**一个按钮**，点一下换一种排法 ★★★
+  ///
+  /// ## ★★ 用户裁定（原话）★★
+  ///
+  /// > "快捷排序**合并为一个快捷排序按钮**，点一下周期排前面，
+  /// >  再点一下临时排前面，**不需要占三个按钮位置**。"
+  /// > "**按钮文字不变，始终为快捷排序**。"
+  ///
+  /// ★ 这是**纯界面状态**（不持久化）—— 它只决定"下一次点击排哪一种"。
+  ///   默认 `'timed'`（与旧界面的第一个按钮一致）。
+  String nextSortTarget = 'timed';
+
+  /// ★ 点一下「快捷排序」：按 `nextSortTarget` 排一次，然后**切换**下一次的目标。
+  Future<void> sortQueueNext() async {
+    final by = nextSortTarget;
+    // ★ 先切换（用户连点两次就是两种排法交替），再执行
+    nextSortTarget = (by == 'timed') ? 'fixed' : 'timed';
+    update();
+    await sortQueueBy(by);
+  }
 
   /// ★ **一次性排序执行顺序** —— `by` ∈ `'timed'` / `'fixed'`。
   ///

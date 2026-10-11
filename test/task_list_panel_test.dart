@@ -1216,11 +1216,37 @@ void _phase2Tests() {
     expect(q.contains('disabledColor'), isTrue,
         reason: '不在窗口的任务应变灰（用户: "直接变灰放到等待中就行"）');
 
-    // 数据来自 WebSocket（实时）—— 只读观察窗删了, 但实时数据仍用于状态
-    expect(q.contains('runningTask'), isTrue);
-    // ★ Obx 的安全性: 服务拿不到时返回**静态** widget, 不进 Obx
-    expect(q.contains('if (sm == null)'), isTrue,
-        reason: 'sm 为 null 时不能进 Obx（没有 Rx 可读会让 GetX 抛异常）');
+    // ★★ 片 5 (F2b) 后：**「正在运行」不再是一个固定的行** ★★
+    //
+    // 用户原话:
+    //   "**执行队列那个正在运行个人突破不应该存在了啊**，这个不符合咱们
+    //    列表里流转[正在运行]状态的定义。"
+    //   "**队首只是代表列表顺序第一个而已，但正在运行的可以使列表里任意一个。**"
+    //
+    // ⇒ 原来那行 `_runningRow`（"▶ 调度中 │ ▶ 正在运行: xxx [任务设置]"）
+    //   **整块删除**；"运行中"改成**跑着的那一行上的状态标记**。
+    expect(q.contains('_runningRow'), isFalse,
+        reason: '★ 「正在运行」不能再占一整行 —— 它是**流转的状态标记**');
+    expect(q.contains('_statusBlock'), isFalse,
+        reason: '★ 那个状态块已删除（三个职责已各自安置）');
+    // ★ 实时数据仍然要用（现在用在"这一行是不是正在跑"的判断上）
+    //
+    // ⚠ 片 5 (F2b) 之后**不再**出现 `runningTask` 这个词 ——
+    //   判断"这一行是不是正在跑"改成了**读后端给的行内字段**
+    //   `e['running']`（由 `/run_list` 按 `running_entry_id` 算好, **身份而非位置**）
+    //   ⇒ 断言改成钉住**新的数据来源**。
+    expect(q.contains("e['running']"), isTrue,
+        reason: '★ 行内"运行中"标记必须读后端的 e["running"]');
+    expect(q.contains("e['runs']"), isTrue,
+        reason: '★ 行内"已运行 N 次"必须读后端的 e["runs"]');
+    // ★ 行内标记存在（"运行中" / "已运行 N 次"）
+    expect(q.contains('运行中'), isTrue, reason: '缺「运行中」行内标记');
+    expect(q.contains('已运行'), isTrue, reason: '缺「已运行 N 次」行内标记');
+    // ★ Obx 的安全性: 服务拿不到时返回**null**，调用方必须空安全
+    expect(q.contains('_scriptModelOf'), isTrue,
+        reason: '取 ScriptModel 必须走安全封装（服务未注册时返回 null）');
+    expect(q.contains('sm?.state.value'), isTrue,
+        reason: '★ 可能拿不到 sm ⇒ 必须用 `?.` 空安全（直接点会抛）');
   });
 
   test('执行队列**独立成一个区块**；全局开关已移进它（用户要求）', () {

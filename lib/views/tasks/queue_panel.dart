@@ -124,7 +124,6 @@ List<Widget> _queueSlivers(BuildContext context, TaskListController c) {
   final queued = c.queuedTasks;
   final pending = queued.where((t) => t['slot'] == 'pending').toList();
   final waiting = queued.where((t) => t['slot'] != 'pending').toList();
-  final sm = _scriptModelOf(c);
 
   // ★★★ 本组 sliver 必须住在一个**可滚动**的 viewport 里（修用户报的 #7）★★★
   //
@@ -188,10 +187,29 @@ List<Widget> _queueSlivers(BuildContext context, TaskListController c) {
               ],
             ),
 
-            // ---------- 分类 0: 调度器 + 正在运行 ----------
-            _statusBlock(context, c, sm),
+            // ---------- 分类 0: ~~调度器 + 正在运行~~ **已删除** ----------
+            //
+            // ★★★ 片 5 (F2b): **「正在运行」不再占一行**（用户裁定）★★★
+            //
+            // ## ★★ 用户原话（两次强调）★★
+            //
+            // > "**执行队列那个正在运行个人突破不应该存在了啊**，这个不符合
+            // >  咱们列表里流转[正在运行]状态的定义。"
+            // > "**队首只是代表列表顺序第一个而已，但正在运行的可以使列表里
+            // >  任意一个。**"
+            //
+            // ★ 原来这里是一个 `_statusBlock`（"▶ 调度中 │ ▶ 正在运行: xxx
+            //   [任务设置]"）—— 它把"正在运行"表达成**固定的一行**，
+            //   与"运行是列表里**流转的状态**"矛盾 ⇒ **整块删掉**。
+            //
+            // ★ 它的三个职责已分别安置：
+            //   | 原职责 | 现在在哪 |
+            //   |---|---|
+            //   | "正在运行 X" | ★ **X 那一行上的「运行中」标记**（F2c）|
+            //   | "任务设置" | ★ 删掉（队列行上本来就有设置，F2e）|
+            //   | "调度中/已停止" | ★ 脚本进程状态在顶部 `RunControlBar` 已有（F2a）|
 
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
             const Divider(height: 1),
             const SizedBox(height: 6),
 
@@ -328,29 +346,6 @@ List<Widget> _queueSlivers(BuildContext context, TaskListController c) {
   ];
 }
 
-/// **调度器状态 + 正在运行**（合并成一个观察块）。
-///
-/// ★ 这两条本来就是一件事 —— "调度器在跑吗 / 现在在跑什么"。
-Widget _statusBlock(BuildContext context, TaskListController c, dynamic sm) {
-  if (sm == null) {
-    // ★ 服务未就绪 —— **不进 `Obx`**（没有 Rx 可读会让 GetX 抛异常）
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Text('（还没有运行状态 —— 脚本未启动）',
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: Theme.of(context).disabledColor,
-              )),
-    );
-  }
-  return Obx(() => _statusContent(context, c, sm));
-}
-
-Widget _statusContent(BuildContext context, TaskListController c, dynamic sm) {
-  final state = sm.state.value;
-  final running = state == ScriptState.running;
-  return _runningRow(context, c, sm.runningTask.value, running: running);
-}
-
 /// 只读的一行任务（**中文名** + 下次运行 + 任务设置入口）。
 
 /// **安全**取该账号的 `ScriptModel`（拿不到返回 `null`）。
@@ -370,71 +365,6 @@ dynamic _scriptModelOf(TaskListController c) {
   } catch (_) {
     return null;
   }
-}
-
-/// 「正在运行」这一行的**内容**（读 Rx 的结果传进来, 便于单独测/复用）。
-///
-/// `running` = **调度器**是否在跑（`ScriptState.running`）;
-/// `cur`     = **此刻在跑的任务**（可能为 null = 空闲）。
-///
-/// ★ 两者分开显示: 调度器在跑但两个任务之间会有短暂空闲,
-///   那时"空闲"是对的（不是状态错了）。
-Widget _runningRow(BuildContext context, TaskListController c, dynamic cur,
-    {bool running = true}) {
-  final name = (cur == null) ? '' : '${cur.taskName}';
-  final busy = name.isNotEmpty;
-  return Container(
-    padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 2),
-    color: busy ? Colors.green.withValues(alpha: 0.12) : Colors.transparent,
-    child: Row(
-      children: [
-        Icon(
-          running ? Icons.play_circle : Icons.pause_circle_outline,
-          size: 18,
-          color: running ? Colors.green : Colors.grey,
-        ),
-        const SizedBox(width: 6),
-        // 调度器状态（中文 —— 直接 `'$state'` 会打印英文枚举名）
-        Text(running ? '调度中' : '调度已停止',
-            style: Theme.of(context).textTheme.labelSmall),
-        const SizedBox(width: 10),
-        const VerticalDivider(width: 1),
-        const SizedBox(width: 10),
-        Icon(
-          busy ? Icons.play_arrow : Icons.pause,
-          size: 18,
-          color: busy ? Colors.green : Theme.of(context).disabledColor,
-        ),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text(
-            busy ? '正在运行: ${_zhName(name, c)}' : '正在运行: （空闲）',
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  fontWeight: busy ? FontWeight.bold : null,
-                  color: busy ? null : Theme.of(context).disabledColor,
-                ),
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-        if (busy)
-          TextButton(
-            onPressed: () => Get.find<NavCtrl>().openTaskSettings(name),
-            child: const Text('任务设置'),
-          ),
-        // ★★★ 「取消任务」按钮**已删除**（用户最终裁定）★★★
-        //
-        // 用户原话:
-        // > "**就把这个功能聚合到暂停调度按钮上好了**, 点击暂停调度,
-        // >  正在运行的任务**自动回退到队列首位, 视作等待执行**,
-        // >  这样是不是更优雅。"
-        //
-        // ★ 是更优雅 —— "取消"与"暂停"本来就是同一个动作:
-        //   停手 + 手头这个退回队首待命。所以**不需要**第二个按钮。
-        // ★ 现在由 `RunControlBar` 的「暂停调度」按钮承担（见 `run_control_bar.dart`）,
-        //   后端 `put_pause` 会**同时**做:置暂停 + 把 `running_task` 退回队首。
-      ],
-    ),
-  );
 }
 
   // ---------------------------------------------------------------- 移出队列
@@ -607,6 +537,59 @@ class QueueRow extends StatelessWidget {
   Widget build(BuildContext context) => _queueRow(context, c, index);
 }
 
+/// ★ 队列行上的**状态小标记**（片 5 / F2c 抽出，三处共用）。
+///
+/// 统一外观: 圆角小胶囊 + 小图标 + 短文字。
+Widget _queueBadge(BuildContext context,
+    {required String text, required Color color, required IconData icon}) {
+  return Container(
+    margin: const EdgeInsets.only(right: 6),
+    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.18),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 13, color: color),
+        const SizedBox(width: 2),
+        Text(
+          text,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: color,
+                fontWeight: FontWeight.w700,
+              ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// ★★★ 片 5 (F2d): 点「▶ 播放」-> 让**这一条**立刻运行 ★★★
+///
+/// > 用户: "我还想添加一个按钮，**每个队列里的任务都有一个播放按钮**，
+/// >  点一下就可以**切换成正在运行**。"
+///
+/// ★ 走 `PUT /{script}/run_control/entry_play`（把该条目的 `next_run`
+///   拉到现在）；后端会**明确报错**如果这条当前不可跑（未启用/不在窗口内），
+///   所以这里**必须把后端的原话上屏**，不能让用户以为"点了没反应"。
+Future<void> _playEntry(BuildContext context, TaskListController c,
+    Map<String, dynamic> e) async {
+  final entryId = '${e['_entryId'] ?? e['entry_id'] ?? ''}';
+  final name = _zhName('${e['task']}', c);
+  if (entryId.isEmpty) {
+    Get.snackbar('无法播放', '这一条没有条目身份（entry_id），请先刷新队列',
+        snackPosition: SnackPosition.BOTTOM);
+    return;
+  }
+  final msg = await c.playEntry(entryId);
+  if (!context.mounted) return;
+  Get.snackbar(msg.startsWith('✓') ? '已排到最前' : '无法播放：$name', msg,
+      snackPosition: SnackPosition.BOTTOM,
+      duration: const Duration(seconds: 4));
+}
+
 /// 一行「执行顺序」条目的**内容**（从 `_QueuePanelState._queueRow` 整段搬来）。
 Widget _queueRow(BuildContext context, TaskListController c, int i) {
   final rows = c.queuedTaskRows;
@@ -739,59 +722,96 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                         ),
                       ),
                     ],
-                    // ★★★ 片 5 (F2b): 「**正在播放**」标记 —— ★ 在**正在跑的那一行**上 ★★★
+                    // ★★★ 片 5 (F2b/F2c): 「**正在运行**」= **流转的状态标记** ★★★
                     //
                     // ## ★★ 用户裁定（原话）★★
                     //
                     // > "对于正在运行，就像是**音乐播放列表里的正在播放**一样，
                     // >  **他不是排在队首的**，而是一种**状态按顺序变更**的"
                     //
-                    // > "这种正在运行的状态**不是在[队首]**，而是在当前"播放列表"里
-                    // >  "正在播放"的"**音乐**"上，也就是说在当前"**正在运行**"的
-                    // >  "**任务**"上，而**切换任务顺序的各个配置页就是切换不同的歌单**。"
+                    // > "这种正在运行的状态**不是在[队首]**，而是在当前'播放列表'里
+                    // >  '正在播放'的'**音乐**'上，也就是说在当前'**正在运行**'的
+                    // >  '**任务**'上，而**切换任务顺序的各个配置页就是切换不同的歌单**。"
                     //
-                    // ## 实现
+                    // > "**队首只是代表列表顺序第一个而已，但正在运行的可以是
+                    // >  列表里任意一个**"
                     //
-                    // ★ 用 `c.runningTaskCommand`（后端 WebSocket 推的 `runningTask`）
-                    //   与**这一行的任务名**比 —— 相等才亮标记。
-                    // ★ 所以它**跟着任务走**：任务被拖到哪、标记就跟到哪；
-                    //   换歌单（配置页）后自然指向新歌单里正在跑的那一首。
+                    // > "由于现在是**流转的运行**，那么就会出现**运行过，
+                    // >  状态标记为已运行X次**"
                     //
-                    // ⚠ 只对**任务行**显示（休息条目不会被"运行"）。
-                    if (isTask && cmd == c.runningTaskCommand) ...[
+                    // ## 三种状态（★ 数据全部来自后端 `/run_list`）
+                    //
+                    // | 条件 | 标记 |
+                    // |---|---|
+                    // | `e['running'] == true` 且脚本在跑 | 【▶ **运行中**】绿 |
+                    // | `e['running'] == true` 但脚本**没在跑** | 【⏸ **已暂停**】橙 |
+                    // | `e['runs'] > 0`（跑过）| 【✓ **已运行 N 次**】灰 |
+                    // | 其它（还没跑）| 不显示 |
+                    //
+                    // ★ `running` 由后端按 **`running_entry_id`**（条目身份）判定
+                    //   —— "**身份，不是位置**" ⇒ 标记**跟着任务走**，
+                    //   与"第几行"无关（任务拖到哪它就跟到哪）。
+                    if (isTask && e['running'] == true) ...[
+                      // ★ 脚本进程在跑 -> 运行中；没跑（被暂停/停止）-> 已暂停
+                      Builder(builder: (ctx) {
+                        final sm = _scriptModelOf(c);
+                        final procRunning =
+                            sm?.state.value == ScriptState.running;
+                        final running = procRunning;
+                        return Tooltip(
+                          message: running
+                              ? '★ **运行中** —— 当前正在运行的就是这一条。\n'
+                                  '它**不是固定的第一行**：调度按播放模式推进，'
+                                  '标记会跟着走到正在跑的那一条上。'
+                              : '★ **已暂停** —— 这一条是刚在跑的，'
+                                  '但脚本进程已停（暂停调度 / 未启动）。',
+                          child: _queueBadge(
+                            context,
+                            text: running ? '运行中' : '已暂停',
+                            color: running ? Colors.green : Colors.orange,
+                            icon: running
+                                ? Icons.play_arrow
+                                : Icons.pause_circle_outline,
+                          ),
+                        );
+                      }),
+                    ] else if (isTask && ((e['runs'] as num?)?.toInt() ?? 0) > 0) ...[
+                      // ★ 跑过 -> 显示跑了几次（用户要求："状态标记为已运行X次"）
                       Tooltip(
-                        message: '★ **正在播放** —— 当前正在运行的就是这一条。\n'
-                            '它**不是固定的第一行**：调度按播放模式推进，'
-                            '标记会跟着走到正在跑的那一条上。',
-                        child: Container(
-                          margin: const EdgeInsets.only(right: 6),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 5, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: Colors.green.withValues(alpha: 0.18),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.play_arrow,
-                                  size: 13, color: Colors.green),
-                              const SizedBox(width: 2),
-                              Text(
-                                '正在播放',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .labelSmall
-                                    ?.copyWith(
-                                      color: Colors.green.shade800,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                              ),
-                            ],
-                          ),
+                        message: '★ **已运行 N 次** —— 这一条在本页（歌单）里'
+                            '已经跑过的次数。\n'
+                            '★ 计数**按条目**记（同一任务的多条条目互不混淆），'
+                            '存盘在 `task_state`，重启后端不丢。',
+                        child: _queueBadge(
+                          context,
+                          text: '已运行 ${(e['runs'] as num).toInt()} 次',
+                          color: Colors.blueGrey,
+                          icon: Icons.check,
                         ),
                       ),
                     ],
+                    // ★★★ F2d: 每行「▶ 播放」—— 点一下让**这一条**立刻跑 ★★★
+                    //
+                    // > 用户: "我还想添加一个按钮，**每个队列里的任务都有一个
+                    // >  播放按钮**，点一下就可以**切换成正在运行**。"
+                    //
+                    // ★ 后端 `PUT /{script}/run_control/entry_play`
+                    //   把该条目的 `next_run` 拉到现在（与"乱序"同一手法）
+                    //   ⇒ 调度器下一轮自然选它，**不改调度核心**。
+                    // ★ 正在跑的那一条不显示按钮（它已经在跑了）。
+                    if (isTask && e['running'] != true)
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints:
+                            const BoxConstraints(minWidth: 28, minHeight: 28),
+                        tooltip: '让**这一条**立刻运行\n'
+                            '（把它排到最前；不改其它任务的顺序）',
+                        onPressed: c.playingEntry == true
+                            ? null
+                            : () => _playEntry(context, c, e),
+                        icon: const Icon(Icons.play_circle_outline, size: 18),
+                      ),
                     // ⚠ 这一行 `Flexible(` **必须留着** ——
                     //   我第一次插标记时把它挤掉了, `flutter analyze` 立刻报
                     //   `Undefined name 'child'`（下一个 widget 的 child 悬空）。

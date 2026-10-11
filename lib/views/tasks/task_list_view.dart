@@ -2021,19 +2021,39 @@ class _QueueTab extends StatelessWidget {
         runSpacing: 4,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          Text('快捷排序',
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  )),
-          OutlinedButton.icon(
-            onPressed: c.sortingQueue ? null : () => c.sortQueueBy('timed'),
-            icon: const Icon(Icons.schedule, size: 16),
-            label: const Text('周期排前面'),
-          ),
-          OutlinedButton.icon(
-            onPressed: c.sortingQueue ? null : () => c.sortQueueBy('fixed'),
-            icon: const Icon(Icons.push_pin, size: 16),
-            label: const Text('临时排前面'),
+          // ★★★ 片 5 (F2f): 快捷排序 = **一个按钮，点一下换一种排法** ★★★
+          //
+          // ## ★★ 用户裁定（原话）★★
+          //
+          // > "快捷排序**合并为一个快捷排序按钮**，点一下周期排前面，
+          // >  再点一下临时排前面，**不需要占三个按钮位置**。"
+          // > "**按钮文字不变，始终为快捷排序**。"
+          //
+          // ## 实现
+          //
+          // ★ **文字恒为「快捷排序」**（用户明确要求），
+          //   点一下在"周期排前面 / 临时排前面"之间**切换**；
+          //   ★ "这一次会排成什么"进 **Tooltip**（悬停显示，本项目惯例）。
+          // ★ `c.nextSortTarget` = 下一次点击要排的那一类（前后端都不持久化,
+          //   纯界面状态）。
+          Tooltip(
+            message: '★ 点一下**排一次序**（周期 / 临时谁在前面），'
+                '再点一下换另一种。\n'
+                '当前会排成：**${c.nextSortTarget == 'timed' ? '周期排前面' : '临时排前面'}**\n'
+                '★ 排完之后**所有条目仍然可以任意拖动**，不限类别 ——\n'
+                '**包括「休息」**（它拖到中间时, 后面的任务会等它结束再跑）。',
+            child: OutlinedButton.icon(
+              onPressed: c.sortingQueue
+                  ? null
+                  : () => c.sortQueueNext(),
+              icon: Icon(
+                c.nextSortTarget == 'timed'
+                    ? Icons.schedule
+                    : Icons.push_pin,
+                size: 16,
+              ),
+              label: const Text('快捷排序'),
+            ),
           ),
           // ★★★ 说明改为**悬停显示**（用户要求）★★★
           //

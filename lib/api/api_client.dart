@@ -711,6 +711,21 @@ class ApiClient {
     return res.data ?? {};
   }
 
+  /// ★★★ 片 5 (F2d): **让某一条条目立刻运行**（队列行的「▶ 播放」）★★★
+  ///
+  /// ★ 后端把该条目的 `next_run` 拉到现在（与"乱序"同一手法）——
+  ///   调度器下一轮自然选它。**不改调度核心。**
+  /// ★ 后端会**明确报错**如果这条当前不可跑（未启用 / 不在执行队列 /
+  ///   不在开放时段）⇒ 调用方**必须**把 `error` 上屏。
+  Future<Map<String, dynamic>> playEntry(
+      String scriptName, String entryId) async {
+    final res = await request(() => put(
+          '/$scriptName/run_control/entry_play',
+          data: {'entry_id': entryId},
+        ));
+    return res.data ?? {};
+  }
+
   /// **切换到某一页**。
   ///
   /// ★ 后端在**同一个请求**里做两步（顺序关键, 原子）:

@@ -49,21 +49,47 @@ const _ctrl = 'lib/controller/task_list/task_list_controller.dart';
 const _api = 'lib/api/api_client.dart';
 
 void main() {
-  group('① 两个排序按钮（快捷排序）', () {
-    test('视图里有「周期排前面」与「临时排前面」两个按钮', () {
+  group('① 快捷排序：**一个按钮，点一下换一种排法**（片 5 / F2f）', () {
+    // ★★ 2026-10-11 用户裁定（**改变了此前的设计**）★★
+    //
+    //   "快捷排序**合并为一个快捷排序按钮**，点一下周期排前面，
+    //    再点一下临时排前面，**不需要占三个按钮位置**。"
+    //   "**按钮文字不变，始终为快捷排序**。"
+    //
+    // ⇒ 从"两个按钮"改成"**一个按钮 + 内部交替**"：
+    //   * 文字**恒为**「快捷排序」
+    //   * 点一下按 `nextSortTarget` 排一次，然后**切换**它
+    //   * "这一次会排成什么"进 **Tooltip**（悬停显示，本项目惯例）
+    test('视图里只有**一个**「快捷排序」按钮（文字不变）', () {
       final v = _codeOnly(_view);
-      expect(v.contains('周期排前面'), isTrue,
-          reason: '★ 缺了「周期排前面」按钮 —— 用户要的快捷排序之一');
-      expect(v.contains('临时排前面'), isTrue,
-          reason: '★ 缺了「临时排前面」按钮 —— 用户要的快捷排序之一');
+      expect(v.contains('快捷排序'), isTrue,
+          reason: '★ 缺了「快捷排序」按钮');
+      // ★ 两个旧按钮的文字**不该再作为按钮 label 出现**
+      //   （它们现在只在 Tooltip 的说明文字里）
+      expect(v.contains("label: const Text('周期排前面')"), isFalse,
+          reason: '★ 用户要求"合并为一个按钮" —— 不该再有独立的「周期排前面」按钮');
+      expect(v.contains("label: const Text('临时排前面')"), isFalse,
+          reason: '★ 用户要求"合并为一个按钮" —— 不该再有独立的「临时排前面」按钮');
     });
 
-    test('两个按钮分别调 sortQueueBy(timed) / sortQueueBy(fixed)', () {
+    test('★ 点一下换一种：走 `sortQueueNext()`（内部交替 timed / fixed）', () {
       final v = _codeOnly(_view);
-      expect(v.contains("sortQueueBy('timed')"), isTrue,
-          reason: "「周期排前面」应调 sortQueueBy('timed')");
-      expect(v.contains("sortQueueBy('fixed')"), isTrue,
-          reason: "「临时排前面」应调 sortQueueBy('fixed')");
+      final c = _codeOnly(_ctrl);
+      expect(v.contains('sortQueueNext'), isTrue,
+          reason: '按钮应调 `sortQueueNext()`（交替），不是写死某一个');
+      // ★ 两种排法都还在（只是不再各占一个按钮）
+      expect(c.contains('nextSortTarget'), isTrue,
+          reason: '★ 交替逻辑应有 `nextSortTarget`（下一次排哪一种）');
+      expect(c.contains("'fixed'"), isTrue,
+          reason: '★ `fixed`（临时排前面）必须仍然可达 —— 只是不占独立按钮');
+      expect(c.contains("'timed'"), isTrue,
+          reason: "★ `timed`（周期排前面）也必须仍然可达");
+    });
+
+    test('controller 的 `sortQueueBy` 仍然在（一个动作，不是模式）', () {
+      final c = _codeOnly(_ctrl);
+      expect(c.contains('sortQueueBy'), isTrue,
+          reason: '底层排序动作 `sortQueueBy` 必须保留（`sortQueueNext` 调它）');
     });
 
     test('用 OutlinedButton（是"做一个动作", 不是"选一个模式"）', () {
