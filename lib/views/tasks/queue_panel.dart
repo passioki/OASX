@@ -158,22 +158,20 @@ List<Widget> _queueSlivers(BuildContext context, TaskListController c) {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ★★★ 片 10 (F2a/①): **「脚本未启动 / ▶ 启动脚本」放到最上** ★★★
+            // ★★★ 片 11: 队列区最上的 `脚本未启动 [启动脚本]` **已删除** ★★★
             //
-            // ## ★★ 用户原话 ★★
+            // > 用户: "启动/停止脚本**放到共用顶部**"
+            // > 用户: "**'} 一个按钮 ┘**"
+            // > 用户: "执行队列页面**有两个脚本未启动，冗余了**，
+            // >        保留顶部的一个即可"
             //
-            // > "**'脚本未启动 ▶启动脚本' 从任务列表移到最上**"
+            // ⇒ ★ 「启停脚本」现在只在**共用顶部**（`RunControlBar`）一处；
+            //   这里**不再有**自己的那一份。
+            // ⇒ ★ 「暂停/继续调度」也不在标题行 —— 它在
+            //   **"正在运行的那一行"**上（与 `[▶]` 互斥）。
             //
-            // ★ 这是**进程级**开关（起 / 停脚本子进程），是"脚本能不能跑"的
-            //   **前提** ⇒ 放在**队列最上面**，一眼看到当前状态。
-            // ★ 与「暂停调度」（调度级**软停**，在**队首行右侧**）明确区分：
-            //   | 层级 | 动作 | 在哪 |
-            //   |---|---|---|
-            //   | **进程级** | 启动 / 停止脚本（**硬停**）| ★ **这里（最上）** |
-            //   | **调度级** | 暂停 / 继续调度（**软停**）| ★ **队首行右侧** |
-            // ★ 单独一行 —— 不挤标题（`Row` 里塞进去会让标题被压扁）。
-            _scriptProcessBar(context, c),
-            const SizedBox(height: 4),
+            // ★ 所以「执行队列」标题行现在就是：
+            //   `执行队列   [添加] [清空]`
             Row(
               children: [
                 Expanded(
@@ -821,14 +819,52 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                     //   把该条目的 `next_run` 拉到现在（与"乱序"同一手法）
                     //   ⇒ 调度器下一轮自然选它，**不改调度核心**。
                     // ★ 正在跑的那一条不显示按钮（它已经在跑了）。
-                    if (isTask && e['running'] != true)
+                    // ★★★ 队列行上的调度控制（用户裁定 2026-10-11）★★★
+                    //
+                    // ## ★★ 用户原话 ★★
+                    //
+                    // > "未运行的行  [▶] → **播放头设到这条 + 调度器开始跑**"
+                    // > "正在运行的行 [⏸] → **暂停调度**"
+                    // > "正在运行的行 [▶]? → **不需要**（它已经在跑）"
+                    //
+                    // ## 为什么要合并
+                    //
+                    // > "**[⏸ 暂停调度] 应该和队列中任务点击运行那个按钮
+                    // >   是一个东西，放在外边就冗余了**"
+                    //
+                    // ⇒ ★ 同一位置、**按状态互斥显示**：
+                    //   | 这一条 | 显示 | 点击效果 |
+                    //   |---|---|---|
+                    //   | **正在运行** | `[⏸]` | 暂停调度（**不动队列顺序**）|
+                    //   | **未运行** | `[▶]` | 播放头设到这条 + 开始跑 |
+                    //
+                    // ★ **暂停不再"退回队首"**（用户: "执行顺序就是个播放列表,
+                    //   退回队首不应该是软件来操作的"）⇒ 后端已删该逻辑。
+                    if (isTask && e['running'] == true)
+                      Tooltip(
+                        message: '★ **暂停调度** —— 跑完**当前这一场**就停手。\n'
+                            '★ **队列顺序不会被改动**（它是你编排的播放列表）。\n'
+                            '★ 点「继续」后**接着往下跑**。',
+                        child: IconButton(
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                              minWidth: 28, minHeight: 28),
+                          onPressed: c.playingEntry == true
+                              ? null
+                              : () => _pauseSchedule(context, c),
+                          icon: const Icon(Icons.pause_circle_filled,
+                              size: 18, color: Colors.orange),
+                        ),
+                      )
+                    else if (isTask)
                       IconButton(
                         visualDensity: VisualDensity.compact,
                         padding: EdgeInsets.zero,
                         constraints:
                             const BoxConstraints(minWidth: 28, minHeight: 28),
                         tooltip: '让**这一条**立刻运行\n'
-                            '（把它排到最前；不改其它任务的顺序）',
+                            '（把**播放头**设到这一条；不改队列顺序）',
                         onPressed: c.playingEntry == true
                             ? null
                             : () => _playEntry(context, c, e),
@@ -965,95 +1001,17 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
           // ⚠ **右对齐**（`Align` + `Alignment.centerRight`）——
           //   这就是用户说的"队首**右侧**"；不硬塞进上面那个 `Row`
           //   （那里已经很满，挤进去会把任务名压扁）。
-          if (i == 0 && isTask)
-            Align(
-              alignment: Alignment.centerRight,
-              child: Padding(
-                padding: const EdgeInsets.only(right: 4, bottom: 2),
-                child: _pauseResumeButton(context, c),
-              ),
-            ),
+          // ★★★ 片 11: 队首行右侧的 `[⏸]` **已删除**（用户裁定）★★★
+          //
+          // > "**[⏸ 暂停调度] 应该和队列中任务点击运行那个按钮是一个东西，
+          // >   放在外边就冗余了**"
+          //
+          // ⇒ ★ 暂停按钮现在**长在"正在运行的那一条"上**（与 `[▶]` 互斥），
+          //   见上面那个 `if (isTask && e['running'] == true)` 分支。
+          // ⇒ ★ 所以这里**不再单独画一个**（否则又变成"两个暂停"）。
         ],
       ),
     ),
-  );
-}
-
-/// ★★★ 片 10 (F2a/①): **进程级开关条** —— 「脚本未启动 / ▶ 启动脚本」★★★
-///
-/// ## ★★ 用户原话 ★★
-///
-/// > "**'脚本未启动 ▶启动脚本' 从任务列表移到最上**"
-///
-/// ★ **进程级**（起 / 停脚本子进程）= **硬停**；
-///   与「暂停调度」（调度级**软停**，在**队首行右侧**）是**两个层级**。
-///
-/// ★ 状态用**圆点 + 文字**（与 `RunControlBar` 同风格），
-///   并且**先看进程**再看调度 —— 避免"没跑却说运行中"（那边记过的 bug）。
-Widget _scriptProcessBar(BuildContext context, TaskListController c) {
-  // ⚠ `sm` 是 `dynamic`（`_scriptModelOf` 返回它）——
-  //   ★ **必须在 builder 内部读 `.state.value`**：
-  //   在外面读的话，依赖记不到，而且拿不到服务时会抛 `_TypeError`。
-  final sm = _scriptModelOf(c);
-  if (sm == null) {
-    // ★ 服务未就绪 —— 给静态提示，**不读 Rx**
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Text('（脚本未启动）',
-          style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                color: Theme.of(context).disabledColor,
-              )),
-    );
-  }
-  // ★★ `GetBuilder` **必须给 `init:`** —— 实测不给会 `initState` 空断言崩
-  //   （`get_state.dart:134: Null check operator used on a null value`）。
-  return GetBuilder<TaskListController>(
-    init: c,
-    builder: (_) {
-      final state = sm?.state.value;
-      final running = state == ScriptState.running;
-      return Wrap(
-        spacing: 8,
-        runSpacing: 4,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          Icon(
-            running ? Icons.play_circle : Icons.pause_circle_outline,
-            size: 18,
-            color: running ? Colors.green : Colors.grey,
-          ),
-          Text(
-            running ? '脚本运行中' : '脚本未启动',
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: running ? Colors.green : null,
-                  fontWeight: FontWeight.w600,
-                ),
-          ),
-          if (!running)
-            FilledButton.icon(
-              onPressed: c.busy
-                  ? null
-                  : () async {
-                      await c.startScript();
-                      await c.reload();
-                    },
-              icon: const Icon(Icons.play_arrow, size: 18),
-              label: const Text('启动脚本'),
-            ),
-          // ★ 「停止脚本」**不在这里** —— 用户裁定：
-          // > "**'脚本未启动 ▶启动脚本' 从任务列表移到最上**"
-          // > "② 暂停/开始调度移到队首右侧；**原位置换成「停止脚本」**"
-          // ⇒ ★ 「停止脚本」留在**任务列表页原来那个位置**（`_scriptProcessRow`）。
-          // ★ 把"两个层级的区别"写在旁边 —— 用户不用猜
-          Text(
-            '（进程级 = 硬停；调度级「暂停调度」在队首行右侧）',
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-          ),
-        ],
-      );
-    },
   );
 }
 
@@ -1068,100 +1026,35 @@ Widget _scriptProcessBar(BuildContext context, TaskListController c) {
 ///
 /// ★ 用 `GetBuilder`（不是 `Obx`）—— 跟随 `TaskListController.reload()` 刷新，
 ///   与 `RunControlBar` 同一手法（避免自己造一套刷新机制）。
-/// ★ 用**自持状态**的小组件 —— ⚠ **不用 `GetBuilder`**：
-///   实测 `GetBuilder` **没有 `init:`** 会在 `initState` 里**空断言崩**
-///   （`get_state.dart:134`），而且它**嵌在列表项里**本来就脆
-///   （每个列表项各自注册依赖）。这里自己读一次 `run_control` 即可。
-Widget _pauseResumeButton(BuildContext context, TaskListController c) {
-  return _PauseResumeInner(c: c);
-}
-
-class _PauseResumeInner extends StatefulWidget {
-  const _PauseResumeInner({required this.c});
-  final TaskListController c;
-  @override
-  State<_PauseResumeInner> createState() => _PauseResumeInnerState();
-}
-
-class _PauseResumeInnerState extends State<_PauseResumeInner> {
-  bool _paused = false;
-  bool _busy = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final r = await ApiClient().getRunControl(widget.c.script);
-      if (mounted) setState(() => _paused = r['paused'] == true);
-    } catch (_) {/* 拿不到就当未暂停 */}
-  }
-
-  Future<void> _toggle() async {
-    setState(() => _busy = true);
-    try {
-      final api = ApiClient();
-      if (_paused) {
-        await api.resumeScript(widget.c.script);
-        if (mounted) {
-          Get.snackbar('已继续调度', '队列会接着往下跑',
-              snackPosition: SnackPosition.BOTTOM);
-        }
-      } else {
-        // ★ 默认 `mode='battle'`：**跑完当前这场战斗**再停 ——
-        //   不提供"立即停"（那会卡在战斗/组队房间半途）。
-        // ★ 片 8-D 之后：**非战斗时（换御魂/预设/准备阶段）会立刻停**，
-        //   不必等整套流程跑完。
-        final res = await api.pauseScriptDetailed(widget.c.script);
-        final requeued = '${res['requeued'] ?? ''}';
-        if (mounted) {
-          Get.snackbar(
-            '已暂停调度',
-            requeued.isEmpty
-                ? '已暂停（当前没有正在运行的任务）'
-                : '「$requeued」已退回队列首位',
-            snackPosition: SnackPosition.BOTTOM,
-            duration: const Duration(seconds: 6),
-          );
-        }
-      }
-      await widget.c.reload();
-    } catch (e) {
-      if (mounted) {
-        Get.snackbar('操作失败', '$e', snackPosition: SnackPosition.BOTTOM);
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-        await _load();
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: _paused
-          ? '★ **继续调度** —— 让队列接着往下跑'
-          : '★ **暂停调度**（软停）\n'
-              '★ **没在战斗中时立刻停**（换御魂 / 换预设 / 准备阶段都会停）；\n'
-              '★ 在战斗中则**跑完这一场**再停，不会卡在半途。\n'
-              '⚠ 与「停止脚本」（进程级硬停）不同。',
-      child: _paused
-          ? OutlinedButton.icon(
-              onPressed: _busy ? null : _toggle,
-              icon: const Icon(Icons.play_arrow, size: 16),
-              label: const Text('继续调度'),
-            )
-          : OutlinedButton.icon(
-              onPressed: _busy ? null : _toggle,
-              icon: const Icon(Icons.pause, size: 16),
-              label: const Text('暂停调度'),
-            ),
+/// ★★★ `[⏸] 暂停调度` —— **在"正在运行的那一行"上**（用户裁定）★★★
+///
+/// ## ★★ 用户原话 ★★
+///
+/// > "**[⏸ 暂停调度] 应该和队列中任务点击运行那个按钮是一个东西，
+/// >   放在外边就冗余了**"
+/// > "正在运行的行 [⏸] → **暂停调度**"
+///
+/// ★ 所以它**不在**卡片标题行，也不在共用顶部 ——
+///   只在**正在跑的那一条**上（与 `[▶]` 互斥）。
+///
+/// ★ **不再"退回队首"**：
+/// > "这个执行顺序就是个**播放列表**，**退回队首不应该是软件来操作的**"
+/// ⇒ 后端 `put_pause` 已删掉 requeue 逻辑。
+Future<void> _pauseSchedule(BuildContext context, TaskListController c) async {
+  try {
+    final res = await ApiClient().pauseScriptDetailed(c.script);
+    if (!context.mounted) return;
+    Get.snackbar(
+      '已暂停调度',
+      '${res['message'] ?? '跑完当前这一场就停手；队列顺序不动'}',
+      snackPosition: SnackPosition.BOTTOM,
+      duration: const Duration(seconds: 6),
     );
+    await c.reload();
+  } catch (e) {
+    if (context.mounted) {
+      Get.snackbar('暂停失败', '$e', snackPosition: SnackPosition.BOTTOM);
+    }
   }
 }
 

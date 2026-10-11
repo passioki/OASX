@@ -961,89 +961,6 @@ class _ScheduleTab extends StatelessWidget with _GlobalPanelMixin {
   }
 
 
-  /// **「停止脚本」** —— ★ 用户裁定：这里是「启动脚本」的**原位置**，
-  /// 现在的职责换成**「停止脚本」**。
-  ///
-  /// ## ★★ 用户原话 ★★
-  ///
-  /// > "**'脚本未启动 ▶启动脚本' 从任务列表移到最上**"（-> 队列区最上）
-  /// > "② 暂停/开始调度移到队首右侧；**原位置换成「停止脚本」**"
-  ///
-  /// ⇒ 所以本行：
-  /// * ★ **不再有「启动脚本」**（它搬到执行队列最上了）
-  /// * ★ 只在**进程在跑**时给一个 **「停止脚本」**（硬停，要二次确认）
-  /// * ★ 调度级的「暂停 / 继续调度」也搬到了**队首行右侧**
-  ///
-  /// ★ `Obx` 必须包住**直接读 Rx 变量**的那一小块。
-  ///   反面例子（踩过）: 写 `Obx(() => SomeStatefulWidget(...))` ——
-  ///   回调里只构造组件、没读 Rx, GetX 抛 "improper use of a GetX"
-  ///   并导致**整页白屏**。
-  Widget _scriptProcessRow(BuildContext context) {
-    return Obx(() {
-      final svc = Get.find<ScriptService>();
-      final sm = svc.scriptModelMap[c.script];
-      final running = sm?.state.value == ScriptState.running;
-      return Row(
-        children: [
-          Icon(running ? Icons.play_circle : Icons.pause_circle_outline,
-              size: 18,
-              color: running ? Colors.green : Theme.of(context).disabledColor),
-          const SizedBox(width: 6),
-          Text(running ? '脚本进程运行中' : '脚本进程已停止'),
-          const SizedBox(width: 12),
-          if (running)
-            Tooltip(
-              message: '**结束子进程**（硬停）\n'
-                  '与「暂停调度」不同 —— 那是软停，会跑完当前战斗',
-              child: OutlinedButton.icon(
-                onPressed: c.busy
-                    ? null
-                    : () async {
-                        // 硬停会中断当前动作，所以要二次确认 ——
-                        // 与"暂停调度"（安全点停）的危险程度不同。
-                        final ok = await _confirmStopScript();
-                        if (!ok) return;
-                        await c.stopScript();
-                        await c.reload();
-                      },
-                icon: const Icon(Icons.stop, size: 18),
-                label: const Text('停止脚本'),
-              ),
-            ),
-          // ★ 解释说明走 **Tooltip**（用户裁定："解释说明用 tooltip 来展示"）
-          //   —— 原来这里是一句常驻的小字，白占横向空间
-          const SizedBox(width: 6),
-          Tooltip(
-            message: '这是**进程级**开关（硬停）。\n'
-                '★ **调度级软停**（暂停/继续）在**执行队列的队首行右侧**。',
-            child: Icon(Icons.info_outline,
-                size: 15, color: Theme.of(context).disabledColor),
-          ),
-        ],
-      );
-    });
-  }
-
-  Future<bool> _confirmStopScript() async {
-    final r = await Get.dialog<bool>(
-      AlertDialog(
-        title: const Text('停止脚本进程？'),
-        content: const Text('会**立即结束**脚本子进程。\n\n'
-            '★ 如果正在战斗中，这一场会被打断（与「暂停调度」不同 ——'
-            '那会跑完当前战斗再停）。\n\n'
-            '确定继续吗？'),
-        actions: [
-          TextButton(
-              onPressed: () => Get.back(result: false),
-              child: const Text('取消')),
-          FilledButton(
-              onPressed: () => Get.back(result: true), child: const Text('停止')),
-        ],
-      ),
-    );
-    return r == true;
-  }
-
   Widget _bulkPanel(BuildContext context) {
     return Card(
       child: Padding(
@@ -1062,7 +979,6 @@ class _ScheduleTab extends StatelessWidget with _GlobalPanelMixin {
             //   | **调度级** | 暂停调度 / 本轮跑完再停（软停，安全点）| 运行控制条 |
             //
             //   混在一起会让人以为"停止"和"暂停调度"是一回事。
-            _scriptProcessRow(context),
             const Divider(height: 20),
 
             _panelTitle(context, '批量操作', '改的是 scheduler.enable（任务级长期开关）'),

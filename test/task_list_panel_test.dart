@@ -390,21 +390,31 @@ void _runControlV2Tests() {
     }
   });
 
-  test('运行控制条只保留 暂停调度 / 继续调度', () {
-    // ★ 用户第二轮实测后要求**去掉「本轮跑完再停」** ——
-    //   所以决策台账 1.2（当初"要第二个按钮"）已作废。
+  test('★ 共用顶部：状态 + 计数 + 启动脚本（暂停调度已移走）', () {
+    // ★★★ 用户裁定（2026-10-11）★★★
     //
-    //   后端 `pause_mode='round'` 这个**能力保留不动**,
-    //   只是界面不再暴露入口（与「只停列表」的处理一致）。
+    // > "● 脚本未启动     待执行 3   等待中 2    [▶ 启动脚本]"
+    // > "这一行**已停止和脚本未启动意义重合了，没必要，所以删掉了**"
+    // > "[⏸ 暂停调度] 应该**和队列中任务点击运行那个按钮是一个东西**，
+    // >  **放在外边就冗余了**"
+    //
+    // ⇒ 共用顶部（`RunControlBar`）现在 = **状态点 + 计数 + 启停脚本**；
+    //   ★ **暂停调度搬到了"正在运行的那一行"**（见 `queue_panel.dart`）。
     final src = codeOnly('lib/views/tasks/run_control_bar.dart');
-    for (final kept in ['暂停调度', '继续调度']) {
-      expect(src.contains(kept), isTrue, reason: '应保留「$kept」');
-    }
-    expect(src.contains('本轮跑完再停'), isFalse,
-        reason: '用户要求去掉「本轮跑完再停」');
+    // 计数上移
+    expect(src.contains('待执行'), isTrue, reason: '计数「待执行」应上移到这一行');
+    expect(src.contains('等待中'), isTrue, reason: '计数「等待中」应上移到这一行');
+    // 启停脚本合并到这里（一个按钮两态）
+    expect(src.contains('启动脚本'), isTrue, reason: '「启动脚本」应在共用顶部');
+    expect(src.contains('停止脚本'), isTrue, reason: '运行时该按钮应变成「停止脚本」');
+    // ★ **暂停按钮**不该在这里了（"暂停调度"作为**状态文字**仍会出现在
+    //   状态点旁边 —— 那是合法的，所以这里只断言**按钮 label** 不在）
+    expect(src.contains("label: const Text('暂停调度')"), isFalse,
+        reason: '★ 暂停按钮已移到「正在运行的那一行」上，不该留在共用顶部');
+    expect(src.contains("label: const Text('继续调度')"), isFalse,
+        reason: '★ 继续按钮同样搬到那一行（与 [▶] 互斥显示）');
     expect(src.contains("mode: 'round'"), isFalse,
         reason: '不该再有 round 模式的入口');
-    // 不提供"立即停" —— 会卡在半途
     expect(src.contains('立即停'), isFalse,
         reason: '「立即停」会卡在半途，明确不提供');
   });
@@ -426,13 +436,28 @@ void _runControlV2Tests() {
     expect(src.contains('!procRunning'), isTrue);
   });
 
-  test('脚本进程开关已从运行控制条移出', () {
+  test('★ 启停脚本**已合并到共用顶部**（用户裁定）', () {
+    // ★★★ 用户原话 ★★★
+    //
+    // > "启动/停止脚本**放到共用顶部**"
+    // > "**'} 一个按钮 ┘**"
+    //
+    // ★ 原来"启动脚本"在任务列表页的 `_bulkPanel` 里（且**只有启动**）、
+    //   "停止脚本"在执行队列页的 `_scriptProcessBar` 里（且**只有停止**）
+    //   ⇒ ★ **两个地方各一半** ⇒ 现在**合并成一个**、放共用顶部。
     final src = codeOnly('lib/views/tasks/run_control_bar.dart');
-    // "开始/停止脚本"是**进程级**操作, 已移到任务总览页
-    expect(src.contains('startScript'), isFalse,
-        reason: '脚本进程开关应移到总览页（进程级 vs 调度级分开）');
-    expect(src.contains('stopScript'), isFalse,
-        reason: '脚本进程开关应移到总览页');
+    expect(src.contains('startScript'), isTrue,
+        reason: '「启动脚本」应在共用顶部');
+    expect(src.contains('stopScript'), isTrue,
+        reason: '「停止脚本」也应在共用顶部（同一个按钮的另一态）');
+    // ★ 任务列表页**不该再**有那一行
+    final view = codeOnly('lib/views/tasks/task_list_view.dart');
+    expect(view.contains('_scriptProcessRow'), isFalse,
+        reason: '★ 任务列表页「脚本进程运行中/已停止」整行应已删除');
+    // ★ 执行队列页**不该再**有那个条
+    final q = codeOnly('lib/views/tasks/queue_panel.dart');
+    expect(q.contains('_scriptProcessBar'), isFalse,
+        reason: '★ 执行队列页「脚本未启动 [启动脚本]」应已删除（与顶部重复）');
   });
 
   test('运行列表面板不再出现 delay 条目', () {
@@ -591,41 +616,43 @@ void _sortAndPrefsTests() {
 
 // ============================================================ Round 4 收尾
 void _round4Tests() {
-  test('进程级开关：启动在**执行队列最上**，停止在任务列表（用户裁定）', () {
+  test('★ 启停脚本只在**共用顶部**（两处旧位置都已删除）', () {
     final src = codeOnly('lib/views/tasks/task_list_view.dart');
     final q = codeOnly('lib/views/tasks/queue_panel.dart');
+    final bar = codeOnly('lib/views/tasks/run_control_bar.dart');
 
-    // ★★ 用户原话（片 10）★★
-    //   "'脚本未启动 ▶启动脚本' **从任务列表移到最上**"
-    //   "② 暂停/开始调度**移到队首右侧**；**原位置换成「停止脚本」**"
-    // ⇒ 「启动脚本」搬到**执行队列最上**；
-    //   「停止脚本」留在**任务列表原来那个位置**。
-    expect(q.contains('_scriptProcessBar'), isTrue,
-        reason: '★ 「启动脚本」应在执行队列区（最上）');
-    expect(q.contains('启动脚本'), isTrue,
-        reason: '★ 队列区必须有「启动脚本」');
-    expect(src.contains('_scriptProcessRow'), isTrue,
-        reason: '★ 任务列表那行还在（它现在只剩「停止脚本」）');
-    expect(src.contains('停止脚本'), isTrue);
-    // ★ 任务列表**不该再有「启动脚本」**（已搬到队列区）
-    expect(src.contains("label: const Text('启动脚本')"), isFalse,
-        reason: '★ 用户要求把「启动脚本」**从任务列表移走**');
+    // ★★ 用户最终裁定（2026-10-11）★★
+    //   "启动/停止脚本**放到共用顶部**"
+    //   "**'} 一个按钮 ┘**"
+    // ★ 原来：任务列表 `_bulkPanel` 只有「停止脚本」、
+    //   执行队列 `_scriptProcessBar` 只有「启动脚本」⇒ **两处各一半**。
+    expect(bar.contains('startScript'), isTrue,
+        reason: '★ 「启动脚本」应在共用顶部（RunControlBar）');
+    expect(bar.contains('stopScript'), isTrue,
+        reason: '★ 「停止脚本」也应在共用顶部（同一按钮的另一态）');
 
-    // ★ 硬停要二次确认 —— 它会打断当前战斗，
-    //   危险程度与「暂停调度」（安全点停）不同。
-    final i = src.indexOf('_confirmStopScript');
-    expect(i, greaterThan(-1));
-    expect(src.substring(i, i + 900).contains('AlertDialog'), isTrue,
-        reason: '硬停必须有二次确认');
+    // ★ 两处旧位置**都不该再存在**
+    expect(src.contains('_scriptProcessRow'), isFalse,
+        reason: '★ 任务列表页那行已删除');
+    expect(q.contains('_scriptProcessBar'), isFalse,
+        reason: '★ 执行队列页那个条已删除');
+
+    // ★ 硬停要二次确认 —— 它会打断当前战斗
+    //   ⚠ 断言要**往前看**：`AlertDialog(` 在 `title: '停止脚本进程？'` **之前**
+    //     （第一次写成"从标题往后 700 字找 AlertDialog" ⇒ 假失败）
+    final i = bar.indexOf('停止脚本进程？');
+    expect(i, greaterThan(-1), reason: '硬停必须有二次确认弹窗');
+    expect(bar.substring((i - 400).clamp(0, i), i).contains('AlertDialog'),
+        isTrue,
+        reason: '硬停必须用 AlertDialog 二次确认');
   });
 
-  test('脚本开关在 Obx 里直接读 Rx（否则 GetX 抛异常导致白屏）', () {
-    final src = codeOnly('lib/views/tasks/task_list_view.dart');
-    final i = src.indexOf('Widget _scriptProcessRow');
-    expect(i, greaterThan(-1));
-    final body = src.substring(i, i + 500);
-    expect(body.contains('Obx('), isTrue);
-    expect(body.contains('.state.value'), isTrue,
+  test('共用顶部的脚本状态在 Obx 里直接读 Rx（否则 GetX 抛异常白屏）', () {
+    // ★ 这段原来是钉 `task_list_view._scriptProcessRow` 的 ——
+    //   那个函数**已删除**（那行搬进共用顶部了）⇒ 改钉 `RunControlBar`。
+    final src = codeOnly('lib/views/tasks/run_control_bar.dart');
+    expect(src.contains('Obx('), isTrue);
+    expect(src.contains('.state.value'), isTrue,
         reason: 'Obx 回调必须**直接读 Rx**，否则抛 improper use of a GetX');
   });
 
