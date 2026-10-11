@@ -2297,7 +2297,18 @@ class _StickyQueueHeader extends SliverPersistentHeaderDelegate {
   double _extent = 0;
 
   /// 量之前的兜底高度 —— 宁可多留一点空白, 也不能裁掉按钮。
-  static const double _fallback = 76;
+  /// ★★★ 首帧兜底高度 ★★★
+  ///
+  /// ⚠ 原来只有 **76** —— 太少。实测（用户报的**白屏**）：
+  /// > "新建的额外的配置页运行脚本……**执行顺序白屏**"
+  /// > debug 版报：**`Bottom overflowed by 60 pixels`**
+  ///
+  /// ★ 根因：本 delegate 的高度是**事后测量**的（`LayoutBuilder` 里
+  ///   `_extent = h`），而 `maxExtent == minExtent == _extent`。
+  ///   切到新配置页时吸顶区内容**变高**（配置页行 + 排序行各自换行），
+  ///   首帧仍用**旧的** `_extent` ⇒ ★ **内容比给的高度高 ⇒ 溢出**。
+  /// ⇒ 所以把兜底值调大（够两行内容），给测量一帧的余量。
+  static const double _fallback = 132;
 
   @override
   double get minExtent => _extent <= 0 ? _fallback : _extent;
@@ -2313,16 +2324,38 @@ class _StickyQueueHeader extends SliverPersistentHeaderDelegate {
         // ★ 必须**不透明** —— 否则下面的队列行会从吸顶区底下透出来
         //   （看起来像字叠字）。
         color: Theme.of(context).scaffoldBackgroundColor,
-        child: LayoutBuilder(
-          builder: (ctx, constraints) {
-            final h = constraints.maxHeight;
-            // ★ 只在"量到的和已有的不一样"时写 —— 避免每帧都改,
-            //   那会让 `shouldRebuild` 永远为真（无谓重建）。
-            if (h.isFinite && h > 0 && (h - _extent).abs() > 0.5) {
-              _extent = h;
-            }
-            return child;
-          },
+        // ★★★ 用"零滚动滚动体"包住内容 ⇒ **永不溢出** ★★★
+        //
+        // ## ★★ 修的是用户报的白屏（实测 `Bottom overflowed by 60 pixels`）★★
+        //
+        // ★ 本 delegate 的高度是**事后测量**的（下面 `LayoutBuilder` 里
+        //   `_extent = h`），而 `maxExtent == minExtent == _extent` ——
+        //   ★ 所以"内容变高"的首帧，给的高度**还是旧的** ⇒ 溢出。
+        // ★ 原来直接 `return child`：`Column` 拿到**上限 = 旧高度**的紧约束
+        //   ⇒ 内容更高就报 `RenderFlex overflowed`（debug 画黑黄条纹、
+        //   ★ release 版看起来就是**整块白掉**）。
+        //
+        // ## 为什么用 `SingleChildScrollView(physics: NeverScrollable…)`
+        //
+        // ★ 它给子级**无界高度** ⇒ `Column` **不可能溢出**
+        //   （内容按自身尺寸布局，超出部分被裁掉，**不报错**）。
+        // ★ 且 `physics: NeverScrollable` ⇒ 用户**滚不动**（它就是吸顶区，
+        //   本来也不该滚）—— 只是借它"无界高度"的能力。
+        // ★ 下一帧 `LayoutBuilder` 量到新高度 -> `_extent` 更新
+        //   -> 高度匹配 -> 一切正常（不再裁任何东西）。
+        child: SingleChildScrollView(
+          physics: const NeverScrollableScrollPhysics(),
+          child: LayoutBuilder(
+            builder: (ctx, constraints) {
+              final h = constraints.maxHeight;
+              // ★ 只在"量到的和已有的不一样"时写 —— 避免每帧都改,
+              //   那会让 `shouldRebuild` 永远为真（无谓重建）。
+              if (h.isFinite && h > 0 && (h - _extent).abs() > 0.5) {
+                _extent = h;
+              }
+              return child;
+            },
+          ),
         ),
       ),
     );
