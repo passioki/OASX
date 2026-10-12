@@ -1351,7 +1351,7 @@ void _phase2Tests() {
     expect(qbody.contains('SingleChildScrollView'), isFalse,
         reason: '★ 同上');
     // ★ #6: 外层必须是 `CustomScrollView`（吸顶的唯一落点）
-    expect(qbody.contains('return CustomScrollView('), isTrue,
+    expect(qbody.contains('CustomScrollView('), isTrue,
         reason: '★ 吸顶需要 `CustomScrollView` + `SliverPersistentHeader`');
 
     // ---------- ★★ 全局开关必须在执行队列里（本轮核心） ----------

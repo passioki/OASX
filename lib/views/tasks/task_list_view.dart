@@ -1467,7 +1467,20 @@ class _QueueTab extends StatelessWidget {
     //
     // ⚠ 本 tab **绝不能**再套 `ListView`/`SingleChildScrollView` ——
     //   那就是"滚动套滚动", Flutter 会抛"垂直方向无界高度"（踩过）。
-    return CustomScrollView(
+    return NotificationListener<ScrollNotification>(
+      // ★★★ F2（[10-12]）：★ **把"用户正在滚动"告诉控制器** ★★★
+      //   ★ 控制器在 3 秒轮询里据此**跳过刷新**
+      //   ⇒ ★★ 不会在用户划动时重建整页 ⇒ **不再被翻回顶部**。
+      onNotification: (n) {
+        if (n is ScrollStartNotification) {
+          c.noteUserScroll(true);
+        } else if (n is ScrollEndNotification ||
+            n is UserScrollNotification) {
+          c.noteUserScroll(false);
+        }
+        return false;   // ★ 不拦截，正常冒泡
+      },
+      child: CustomScrollView(
       // ★★★ 2026-10-12 修一个用户报的 bug：**滚动条被一直"翻回顶部"** ★★★
       //
       // ## ★★ 用户原话
@@ -1486,13 +1499,22 @@ class _QueueTab extends StatelessWidget {
       //   ⇒ ★ 重建时**滚动偏移被重置到 0**（回到顶部）
       //   ⇒ ★★ 表现就是"一直被翻回上边、点不到下面的行"
       //
-      // ## ★ 修法
+      // ## ★ 修法（★ 两版）
       //
-      // ★ 给 `CustomScrollView` 一个 **`PageStorageKey`**
-      //   ⇒ ★ Flutter 会把滚动偏移**按 key 存进 `PageStorage`**
-      //   ⇒ ★ 重建后**恢复**原来的位置（★ 不再跳回顶部）
+      // ★ 第一版：给 `CustomScrollView` 加 `PageStorageKey`
+      //   ⇒ ⚠ **实测无效**（★ 用户："都没修好"）—— 因为重建时
+      //     `GetBuilder` 子树被替换，`PageStorage` 恢复不了位置。
+      // ★ 第二版（当前）：★ **用户交互时不刷新** ★
+      //   ★ 用 `NotificationListener` 监听滚动：★ 滚动中 / 刚松手 1.2 秒内
+      //     ⇒ ★ 通知控制器**跳过本次轮询刷新**
+      //   ⇒ ★ **从根因上别打扰用户**（而不是事后恢复滚动位置）。
       key: const PageStorageKey<String>('queue-scroll'),
       slivers: [
+        // ★★★ F2：**把滚动状态告诉控制器**（★ 它在轮询里据此跳过刷新）★★★
+        //   ★ `SliverPersistentHeader` 之前先插一个"零高度"的
+        //     `SliverToBoxAdapter` 挂 `NotificationListener` 不方便，
+        //   ★ 所以采用**外层包裹**的方式（见下面 `return` 外层）。
+        //   ⚠ 这里保留原 slivers 结构不动。
         // ★★★ 吸顶区（pinned: true）★★★
         SliverPersistentHeader(
           pinned: true,
@@ -1563,6 +1585,7 @@ class _QueueTab extends StatelessWidget {
         // ★ 队列本体（行 + 标题/状态/尾部）—— 由 `QueuePanel` 提供那一组 sliver
         ...QueuePanel.slivers(context, c),
       ],
+      ),
     );
   }
 

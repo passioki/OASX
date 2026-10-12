@@ -73,7 +73,7 @@ void main() {
               '`SliverReorderableList` 会拿到无界高度并抛断言');
       expect(qbody.contains('SingleChildScrollView'), isFalse,
           reason: '★ 同上');
-      expect(qbody.contains('return CustomScrollView('), isTrue,
+      expect(qbody.contains('CustomScrollView('), isTrue,
           reason: '★ #6 吸顶要求外层是 `CustomScrollView`'
               '（`SliverPersistentHeader` 只能住在它里面）');
       expect(qbody.contains('QueuePanel.slivers('), isTrue,

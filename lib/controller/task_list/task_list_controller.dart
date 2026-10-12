@@ -385,6 +385,14 @@ class TaskListController extends GetxController with LogMixin {
             .map((e) => Map<String, dynamic>.from(e as Map))
             .toList();
         // ★ 只在**真的有变化**时 update（避免每 3 秒无谓重建整页）
+        //
+        // ★★★ 2026-10-12（F2）：**用户正在滚动 / 刚松手 ⇒ 跳过本次刷新** ★★★
+        //   ★ 否则 `update()` 重建 ⇒ ★ 滚动偏移被重置
+        //   ⇒ ★★ "划到下面就被翻回顶部"（★ 用户报的 bug）。
+        //   ★ 数据下次再对齐 —— **用户操作优先**。
+        if (_shouldSkipRefresh) {
+          return;
+        }
         if (_queueEntriesDiffer(fresh)) {
           entries = fresh;
           update();
@@ -417,6 +425,51 @@ class TaskListController extends GetxController with LogMixin {
   }
 
   Timer? _queuePoller;
+
+  // ★★★ 2026-10-12 用户报的 bug：**滚动条被一直"翻回顶部"** ★★★
+  //
+  // ## ★★ 用户原话
+  //
+  // > "我在**滑动滚动条**时，页面会**一直自动把页面往上翻**，而且很频繁，
+  // >  表现为，我滑动滚动条到**下边点击其它任务的开始按钮**时，
+  // >  **很难点到**，直接**划到上边**了"
+  //
+  // ## ★ 根因
+  //
+  // * ★ `_queuePoller` **每 3 秒**拉 `/run_list`；★ 脚本在跑时 `running`
+  //   标记/计数每轮都变 ⇒ `_queueEntriesDiffer()` 恒真 ⇒ **每 3 秒 `update()`**
+  // * ★ `update()` ⇒ `GetBuilder` 子树**重建** ⇒ ★ **滚动偏移被重置**
+  //   ⇒ ★★ 用户划到下面就被"翻回顶部"
+  //
+  // ## ★ 修法（★ 我第一版 `PageStorageKey` **无效**，已换掉）
+  //
+  // ★ 加一个"**用户正在交互**"标志：★ 由视图层的 `NotificationListener`
+  //   ★ 在**滚动开始**时置真、**滚动结束 + 短暂冷却**后置假。
+  // ★ 轮询发现"用户在交互"时 ⇒ ★ **跳过这一次刷新**
+  //   （★ 数据下次再对齐，★ 用户操作优先）。
+  //
+  // ⚠ 这是"**从根因上别打扰用户**"，而不是"事后恢复滚动位置"。
+  bool _userInteracting = false;
+  DateTime? _interactUntil;
+
+  /// ★ 视图层调用：★ 用户开始/结束滚动时通知控制器。
+  void noteUserScroll(bool active) {
+    _userInteracting = active;
+    // ★ 松手后再等 1.2 秒才恢复刷新（★ 防"刚松手就被重建"）
+    _interactUntil = active
+        ? null
+        : DateTime.now().add(const Duration(milliseconds: 1200));
+  }
+
+  /// ★ 现在该不该**跳过**刷新？（用户在滚动中 / 刚松手不久）
+  bool get _shouldSkipRefresh {
+    if (_userInteracting) return true;
+    final u = _interactUntil;
+    if (u == null) return false;
+    if (DateTime.now().isBefore(u)) return true;
+    _interactUntil = null;
+    return false;
+  }
 
   @override
   void onClose() {
