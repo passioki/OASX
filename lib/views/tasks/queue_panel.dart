@@ -352,10 +352,17 @@ List<Widget> _queueSlivers(BuildContext context, TaskListController c) {
                           ),
                     ),
                   ),
-                  TextButton(
-                    onPressed: () => pickAndAddToQueue(context, c),
-                    child: const Text('添加'),
-                  ),
+                  // ★★★ 2026-10-12 用户裁定「D9」：**去掉这个重复入口** ★★★
+                  //
+                  // > "休息现在在添加任务按钮中**有两个入口**，顶部的那个点了后
+                  // >  会给出几个固定选项，**下边的直接添加到了队列里**。
+                  // >  请**去掉下边的**。"
+                  //
+                  // ★ 本按钮（队列里"还有 N 个已启用次数任务不在队列里"旁边
+                  //   的那个「添加」）= 与顶部「添加任务」**功能完全重复**
+                  //   ⇒ ★ 已删除（★ 统一从顶部「添加任务」进）。
+                  //
+                  // ⚠ 提示文字里已写明"点右上「添加任务」加入"，够引导了。
                 ],
               ),
             ],
@@ -1540,9 +1547,28 @@ Future<void> _addRest(BuildContext context, TaskListController c) async {
   //
   // ⚠ 键名用**下划线形式**（`rest`），不是大驼峰命令名（`Rest`）——
   //   `setEnabled`/`setTarget` 写的是 `script.<key>.scheduler.<field>`（踩过这个混淆）。
+  // ★★★ 2026-10-12 修：★ **分钟数写进【条目级】`target`** ★★★
+  //
+  // ## ★★ 用户报的 bug
+  //
+  // > "添加进去后甚至**标题都是休息 X 分钟**，我怀疑代码逻辑里有
+  // >  **固定死的写法**，导致**无法更改次数**。"
+  //
+  // ## ★ 根因
+  //
+  // ★ 原来只写**任务级** `setTarget('rest', minutes)` ——
+  //   ★ 那是**全局默认值**，★ 所有休息条目共用 ⇒ ★ 改一条全变
+  //   ⇒ ★ 用户感觉"固定死、改不了"（★ 而且新建的条目读到的是
+  //     配置里残留的旧值，如 5 分钟）。
+  //
+  // ## ★ 修法
+  //
+  // ★ 分钟数写进**条目级** `target`（★ `appendToQueue(..., target: minutes)`）
+  //   ⇒ ★ 每条休息**各自独立**。
+  // ★ 同时**仍**写一次任务级（作为新条目的默认值）—— ★ 保留但不再是唯一来源。
   await c.setEnabled('rest', true);
   await c.setTarget('rest', minutes);
-  await c.appendToQueue(_kRestTask);
+  await c.appendToQueue(_kRestTask, target: minutes);
 }
 
 /// C-5: 重复条目的标签 —— `第 2 条 · 10-10 14:30`。

@@ -2161,8 +2161,33 @@ class TaskListController extends GetxController with LogMixin {
   ///
   /// 后端会给每条生成**唯一** `entry_id`（同秒加两次 -> 追加序号）,
   /// 并按条目分别追踪完成状态（所以两条都会各跑一次）。
-  Future<void> appendToQueue(String command) async {
-    await addEntry({'kind': 'task', 'task': command});
+  /// ★★★ 2026-10-12 修（★ 用户报的"休息 5 分钟改不了"）★★★
+  ///
+  /// ## ★★ 用户原话
+  ///
+  /// > "添加进去后甚至**标题都是休息 X 分钟**，我怀疑代码逻辑里有
+  /// >  **固定死的写法**，导致**无法更改次数**。"
+  ///
+  /// ## ★ 根因
+  ///
+  /// ★ 原来只发 `{'kind': 'task', 'task': command}` —— ★ **没有条目级次数**。
+  /// ★ 而"休息的分钟数"存在**两个**地方：
+  ///   * ★ **条目级** `target`（★ 这一条的分钟数）
+  ///   * ★ 任务级 `rest.scheduler.target`（★ **全局默认值**）
+  /// ★ 只写任务级 ⇒ ★ **所有休息条目共用一个值** ⇒ ★ 改一条全变
+  ///   ⇒ ★ 用户感觉"固定死、改不了"。
+  ///
+  /// ## ★ 修法
+  ///
+  /// ★ `appendToQueue` 增加可选 `target` ⇒ ★ **写进条目级**。
+  /// ★ 这样每条休息**各自独立**（★ 与"条目级次数"同一套原则）。
+  Future<void> appendToQueue(String command, {int target = 0}) async {
+    await addEntry({
+      'kind': 'task',
+      'task': command,
+      // ★ 条目级次数（`> 0` 才写；留空 = 用任务级默认值）
+      if (target > 0) 'target': target,
+    });
   }
 
   /// 添加条目。`index = -1` 追加到末尾。

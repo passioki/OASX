@@ -762,7 +762,11 @@ void _round4Tests() {
     expect(find.text('个人突破'), findsNothing,
         reason: '启用但不在队列的次数任务不该出现在队列里（只在【添加任务】）');
     expect(find.textContaining('不在队列里'), findsOneWidget);
-    expect(find.text('添加'), findsOneWidget);
+    // ★★★ 2026-10-12 用户裁定「D9」：★ 这个「添加」按钮**已删除** ★★★
+    //   > "休息现在在添加任务按钮中有**两个入口**……请**去掉下边的**。"
+    //   ★ 它与顶部「添加任务」功能完全重复 ⇒ 统一从顶部进。
+    expect(find.text('添加'), findsNothing,
+        reason: '★ 未编排提示旁的重复「添加」按钮已按用户要求删除');
   });
 
   // ============================================================ #6 吸顶（真渲染）
