@@ -1877,6 +1877,26 @@ class TaskListController extends GetxController with LogMixin {
     //
     // ⚠ 自动补齐的行**没有 `entry_id`**（`_entryId: ''`）-> 这里不写它,
     //   让后端生成一个新的（`RunEntry` 会补）。
+    // ★★★ 2026-10-12 用户报的 bug：**拖动后条目次数被重设成默认值** ★★★
+    //
+    // ## ★★ 用户原话
+    //
+    // > "**拖动任务后，任务的次数被重设成了默认值**，这不应该。
+    // >  只有在**留空**时才能回退默认值。"
+    //
+    // ## ★ 根因
+    //
+    // ★ 这里重建 `entries` 时**只写了** `kind` / `task` / `entry_id` /
+    //   `group` / `minutes` —— ★ **漏了条目级次数**。
+    // ★ 而"次数"存在两个字段里：
+    //   * `target`        —— ★ 任务类条目的次数（`RunEntry.target`）
+    //   * `rest_minutes`  —— ★ 休息条目的**分钟**
+    // ★ 拖动一次 ⇒ 这两个字段**被抹掉** ⇒ ★ 后端读回时回退默认值。
+    //
+    // ## ★ 修法
+    //
+    // ★ **原样保留**这两个字段（★ 仅在"用户没设过"时不写，
+    //   让后端用默认值 —— 即 `> 0` / 非空才写）。
     final rebuilt = working
         .map((r) => {
               'kind': '${r['kind']}',
@@ -1887,6 +1907,14 @@ class TaskListController extends GetxController with LogMixin {
               // ★ 保留**段名**（后端据此校验"休息不能排中间"）
               if (('${r['group'] ?? ''}').isNotEmpty) 'group': '${r['group']}',
               if ('${r['kind']}' != 'task') 'minutes': r['minutes'],
+              // ★★★ 保留【条目级次数】—— 拖动**不该**重置它 ★★★
+              if ((r['target'] as num?) != null &&
+                  (r['target'] as num).toInt() > 0)
+                'target': (r['target'] as num).toInt(),
+              // ★★★ 保留【休息分钟数】（休息的"次数"其实是分钟）★★★
+              if ((r['rest_minutes'] as num?) != null &&
+                  (r['rest_minutes'] as num).toInt() > 0)
+                'rest_minutes': (r['rest_minutes'] as num).toInt(),
             })
         .toList();
 
