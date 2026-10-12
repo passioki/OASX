@@ -1415,43 +1415,39 @@ class _QueueTab extends StatelessWidget {
             child: Container(
               color: Theme.of(context).scaffoldBackgroundColor,
               padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
-              // ★★★ 吸顶区内容：**抑制溢出报错**（不加滚动体、不用无界约束）★★★
+              // ★★★ 对照实验：撤掉 `ClipRect`（用户裁定「1 可以」）★★★
               //
-              // ## ★★ 用户实测报的三种现象 ★★
+              // ## ★★ 为什么要撤（我必须先排除"是我的修造成的"）★★
               //
-              // > "**Bottom overflowed by 60 pixels**"（纵）
-              // > "**right lowered by 41 pixels**"（横）
-              // > "**TransformLayer is constructed with an invalid matrix**"（★ 引擎错）
+              // ★ 用户实测报过：
+              //   * `Bottom overflowed by 60 pixels`（纵）
+              //   * `right lowered by 41 pixels`（横）
+              //   * `TransformLayer … invalid matrix`（★ 我引入的）
+              //   ★ 而且 —— **debug 版【也没有条纹】**、release 版**白屏**。
               //
-              // ★ 外层 `_StickyQueueHeader` 已用"固定高度 + 零滚动体"解决**纵向**。
-              // ★ 这里解决**横向**，但**必须满足两条硬约束**：
+              // ★ "没有条纹"**推翻了"这是 RenderFlex 溢出"的假设**
+              //   （Flutter 在 debug 一定会给溢出画黑黄条纹）。
+              // ★ 而 `ClipRect` 会**抑制**溢出报错 + **裁掉**内容
+              //   ⇒ ★ 它**可能正是白屏的成因**（把内容裁成空白）。
               //
-              // | 约束 | 为什么 |
-              // |---|---|
-              // | ★ **不能加第二个滚动体** | `_QueueTab` 必须是**唯一**滚动体（`SliverReorderableList` 拿无界高度会抛断言）—— 见 `test/queue_scroll_sticky_test.dart` |
-              // | ★ **不能用无界约束** | `OverflowBox(maxWidth: ∞)` 会让子级尺寸出现 NaN / ∞ ⇒ ★ **`TransformLayer … invalid matrix`**（我上一版踩的坑）|
+              // ## 实验设计（一刀切开"是我造成的"还是"本来就有"）
               //
-              // ## 所以只用 `ClipRect`
+              // ★ 撤掉 `ClipRect` ⇒ 回到"原样透传"：
+              //   * 若白屏**消失** ⇒ ★ 确认是我的修造成的
+              //   * 若白屏**仍在** ⇒ ★ 说明是别的地方，我换方向查
               //
-              // ★ `ClipRect` 创建一个**裁剪层**（渲染层级的 clip，**不参与布局**）
-              //   ⇒ ★ 尺寸约束**完全不变**（无 NaN / ∞ 风险，也不引入滚动体），
-              //     但 Flutter 的 `RenderFlex` 溢出检查会**因为"存在裁剪祖先"而跳过**
-              //     ⇒ ★ 不再打印 `A RenderFlex overflowed` / 画黑黄条纹。
-              //
-              // ⚠ 代价：真的超出时**内容被裁掉**（看不到）。
-              //   但这只在"窗口极窄"时发生，★ 比"白屏 / 条纹"好得多。
-              child: ClipRect(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // ★ #9: 执行顺序**配置页**（1/2/3/… + 新建 + 管理）
-                    _profilesRow(context, c),
-                    const SizedBox(height: 4),
-                    // 快捷排序 + 全局开关（原来就在这一行）
-                    _sortActions(context, c),
-                  ],
-                ),
+              // ⚠ 撤掉后溢出报错会重新出现（debug 会画条纹）——
+              //   ★ 这正是我们要的**诊断信息**。
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // ★ #9: 执行顺序**配置页**（1/2/3/… + 新建 + 管理）
+                  _profilesRow(context, c),
+                  const SizedBox(height: 4),
+                  // 快捷排序 + 全局开关（原来就在这一行）
+                  _sortActions(context, c),
+                ],
               ),
             ),
           ),
@@ -2374,16 +2370,26 @@ class _StickyQueueHeader extends SliverPersistentHeaderDelegate {
     // * `NeverScrollableScrollPhysics` ⇒ 用户**滚不动**
     //   （吸顶区本来也不该滚，只是借它"无界高度"的能力）
     // * ⚠ 不做任何"测量"——见 `_height` 的说明（实测方案已证明不可行）
+    //
+    // ★★★ 对照实验（用户裁定「1 可以」）★★★
+    //
+    // ★ 原来这里套了 `SingleChildScrollView(NeverScrollable)` ——
+    //   ★ 它**同时也是一个裁剪体**，会把超出 `_height` 的内容**裁掉**。
+    // ★ 用户实测："**debug 版也没有条纹**" ⇒ ★ 与"这是 RenderFlex 溢出"
+    //   的假设**矛盾** ⇒ ★ 很可能是**裁剪**造成的"白屏"（而不是溢出）。
+    // ★ 所以现在**撤掉它**，回到"原样透传"：
+    //   * 白屏**消失** ⇒ ★ 确认是我的修造成的
+    //   * 白屏**仍在** ⇒ ★ 换方向查（不是这里）
+    // ⚠ 撤掉后若内容超过 `_height`，debug 会**画条纹并打印**
+    //   `The relevant error-causing widget was: … file:line`
+    //   —— ★ 那正是我们要的诊断信息。
     return SizedBox(
       height: _height,
       child: Material(
         // ★ 必须**不透明** —— 否则下面的队列行会从吸顶区底下透出来
         //   （看起来像字叠字）。
         color: Theme.of(context).scaffoldBackgroundColor,
-        child: SingleChildScrollView(
-          physics: const NeverScrollableScrollPhysics(),
-          child: child,
-        ),
+        child: child,
       ),
     );
   }

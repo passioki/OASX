@@ -139,25 +139,23 @@ void main() {
               '它们就是用户说的"上边的按钮和展示"');
     });
 
-    test('吸顶区：固定高度 + 内容**永不溢出**（三轮实测后的最终方案）', () {
+    test('吸顶区：固定高度（**对照实验期间不裁剪**，让溢出显形）', () {
       final view = codeOnly('lib/views/tasks/task_list_view.dart');
       expect(view.contains('class _StickyQueueHeader'), isTrue,
           reason: '★ 缺 `SliverPersistentHeaderDelegate` 实现');
       final i = view.indexOf('class _StickyQueueHeader');
       final body = view.substring(i, (i + 4200).clamp(0, view.length));
-      // ★★★ 三轮实测的结论（用户实测报过 60px / 41px / 4px 溢出）★★★
+      // ★★★ 对照实验（用户裁定「1 可以」）★★★
       //
-      // "先知道高度"（minExtent/maxExtent 在 build 之前）与"量到内容高度"
-      // （build 的返回值才有真实尺寸）**互相矛盾** —— 试过：
-      //   LayoutBuilder 读 constraints（量到外层高度）
-      //   / Stack+Positioned（量不到） / _MeasureSize 放滚动体外（量到视口）
-      //   / _converged 只增不减（首次不够就永远纠正不了）
-      // ⇒ ★ 最终方案：**固定高度 + 内容包零滚动体**（内容超出就裁掉，绝不报溢出）
+      // 用户实测："**debug 版也没有条纹**" ⇒ ★ 与"这是 RenderFlex 溢出"
+      // 的假设**矛盾** ⇒ ★ 怀疑是**裁剪**（`ClipRect` / 零滚动体）把内容
+      // 裁成了"白屏"。
+      // ⇒ ★ 本次**撤掉全部裁剪**，回到"原样透传"，让溢出**显形**：
+      //   * 白屏消失 ⇒ 确认是我的修造成的
+      //   * 白屏仍在 ⇒ 换方向查
+      // ⚠ 实验结束、定位到原因后，这里**会恢复"不溢出"的保证**。
       expect(body.contains('_height'), isTrue,
           reason: '★ 吸顶区高度应为**固定值** `_height`（实测方案已证明不可行）');
-      expect(body.contains('NeverScrollableScrollPhysics'), isTrue,
-          reason: '★ 内容必须包"零滚动滚动体" —— 它给子级**无界高度** ⇒ '
-              '内容超出固定高度时**不报溢出**（这才是"永不白屏"的保证）');
       expect(body.contains('minExtent') && body.contains('maxExtent'), isTrue,
           reason: '★ delegate 必须给出 min/maxExtent');
       expect(body.contains('shouldRebuild'), isTrue);
