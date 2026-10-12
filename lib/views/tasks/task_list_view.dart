@@ -1555,12 +1555,20 @@ class _QueueTab extends StatelessWidget {
                 color: active ? scheme.primary : scheme.outlineVariant),
             borderRadius: BorderRadius.circular(4),
           ),
-          child: Text(
-            name,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: active ? scheme.onPrimary : scheme.onSurfaceVariant,
-                  fontWeight: active ? FontWeight.w700 : FontWeight.w400,
-                ),
+          // ★ 配置页名**可能很长**（用户双击可改名）⇒ 限制宽度 + 省略号
+          //   ★ 否则它会成为 `Wrap` 里"比可用宽度还宽"的那个 child
+          //     ⇒ ★ 无法再折 ⇒ 溢出（用户实测 `right overflowed by 25 pixels`）
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 140),
+            child: Text(
+              name,
+              overflow: TextOverflow.ellipsis,
+              softWrap: false,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: active ? scheme.onPrimary : scheme.onSurfaceVariant,
+                    fontWeight: active ? FontWeight.w700 : FontWeight.w400,
+                  ),
+            ),
           ),
         ),
       ),
@@ -2024,28 +2032,36 @@ class _QueueTab extends StatelessWidget {
           //   每个选项的 `hint` 也由后端给 ⇒ 改文案不用动前端。
           Tooltip(
             message: '${c.queueEmptyLabel}\n\n${c.queueEmptyHelp}',
-            child: DropdownButton<String>(
-              value: c.queueEmptyChoices
-                      .any((e) => '${e['value']}' == c.whenQueueEmpty)
-                  ? c.whenQueueEmpty
-                  : '${c.queueEmptyChoices.first['value']}',
-              isDense: true,
-              underline: const SizedBox.shrink(),
-              style: Theme.of(context).textTheme.bodySmall,
-              items: [
-                for (final e in c.queueEmptyChoices)
-                  DropdownMenuItem<String>(
-                    value: '${e['value']}',
-                    // ★ 每个选项**各自**的悬停说明（也来自后端）
-                    child: Tooltip(
-                      message: '${e['hint'] ?? e['label']}',
-                      child: Text('${e['label']}'),
+            // ★ 限制宽度 + 省略号 —— 选项文案若很长（或用户改了措辞），
+            //   `DropdownButton` 的固有宽度会变成"比可用宽度还宽的 child"
+            //   ⇒ ★ `Wrap` 无法再折 ⇒ 溢出（用户实测 `right overflowed by 25px`）
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 160),
+              child: DropdownButton<String>(
+                value: c.queueEmptyChoices
+                        .any((e) => '${e['value']}' == c.whenQueueEmpty)
+                    ? c.whenQueueEmpty
+                    : '${c.queueEmptyChoices.first['value']}',
+                isDense: true,
+                isExpanded: true,
+                underline: const SizedBox.shrink(),
+                style: Theme.of(context).textTheme.bodySmall,
+                items: [
+                  for (final e in c.queueEmptyChoices)
+                    DropdownMenuItem<String>(
+                      value: '${e['value']}',
+                      // ★ 每个选项**各自**的悬停说明（也来自后端）
+                      child: Tooltip(
+                        message: '${e['hint'] ?? e['label']}',
+                        child: Text('${e['label']}',
+                            overflow: TextOverflow.ellipsis, softWrap: false),
+                      ),
                     ),
-                  ),
-              ],
-              onChanged: (v) {
-                if (v != null) c.setWhenQueueEmpty(v);
-              },
+                ],
+                onChanged: (v) {
+                  if (v != null) c.setWhenQueueEmpty(v);
+                },
+              ),
             ),
           ),
           // ★★★ P-3b: 只在「队列循环」时显示 —— 循环轮数 + 重置计数 ★★★
@@ -2161,11 +2177,36 @@ class _QueueTab extends StatelessWidget {
                 color: value ? scheme.primary : scheme.outline,
               ),
               const SizedBox(width: 2),
-              Text(label,
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: value ? scheme.primary : scheme.outline,
-                        fontWeight: FontWeight.w600,
-                      )),
+              // ★★★ 必须 `Flexible` + 省略号（修"简报展开白屏"）★★★
+              //
+              // ## ★★ 用户实测（对照实验终于让它显形）★★
+              //
+              // > "**right: overflowed by 25 pixels**，**简报展开时出现，
+              // >  收起时消失**"
+              //
+              // ## 根因链（完整）
+              //
+              // ```
+              // 简报抽屉展开
+              //   ⇒ ★ 左栏被压到 `minLeft = 420`（去掉 padding ⇒ 内容区 ≈396）
+              //   ⇒ 吸顶区的 `Wrap` 宽度不够
+              //   ⇒ ★ 它本该折行 —— 但【单个 child 比 396 还宽时无法再折】
+              //   ⇒ ★ 这就是溢出的那 25px
+              // ```
+              //
+              // ★ 本组件（开关）里的 `Text` 是**不可收缩**的（`Row` 会给它
+              //   完整固有宽度）⇒ ★ 只要它的固有宽度超过可用宽度，就**溢出**。
+              // ★ 包 `Flexible` 后 `Text` 可以**收缩**（配 `ellipsis` 省略），
+              //   ⇒ ★ `Row` 不再超出 ⇒ **不会溢出**（文字最多被省略号截断）。
+              Flexible(
+                child: Text(label,
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                          color: value ? scheme.primary : scheme.outline,
+                          fontWeight: FontWeight.w600,
+                        )),
+              ),
             ],
           ),
         ),
