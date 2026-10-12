@@ -1415,40 +1415,42 @@ class _QueueTab extends StatelessWidget {
             child: Container(
               color: Theme.of(context).scaffoldBackgroundColor,
               padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
-              // ★★★ 吸顶区内容：**纵向、横向都不可能溢出** ★★★
+              // ★★★ 吸顶区内容：**抑制溢出报错**（不加滚动体、不用无界约束）★★★
               //
-              // ## ★★ 用户实测报的两种溢出 ★★
+              // ## ★★ 用户实测报的三种现象 ★★
               //
               // > "**Bottom overflowed by 60 pixels**"（纵）
-              // > "**right lowered by 41 pixels**"（★ 横）
+              // > "**right lowered by 41 pixels**"（横）
+              // > "**TransformLayer is constructed with an invalid matrix**"（★ 引擎错）
               //
-              // ★ 外层 `_StickyQueueHeader` 已经用"固定高度 + 零滚动体"
-              //   解决了**纵向**（见那边的说明）。
-              // ★ 这里是**横向**的保险：`ClipRect` + `OverflowBox`。
+              // ★ 外层 `_StickyQueueHeader` 已用"固定高度 + 零滚动体"解决**纵向**。
+              // ★ 这里解决**横向**，但**必须满足两条硬约束**：
               //
-              // | 组件 | 作用 |
+              // | 约束 | 为什么 |
               // |---|---|
-              // | `ClipRect` | ★ **裁掉**超出部分 —— 顺带**抑制 `RenderFlex overflowed` 报错**（Flutter 只在"没有裁剪祖先"时报）|
-              // | `OverflowBox(maxWidth: ∞)` | ★ 给子级**无界宽度** ⇒ `Wrap` / `Row` 按**自身**宽度布局，**不会**因空间不足而溢出 |
+              // | ★ **不能加第二个滚动体** | `_QueueTab` 必须是**唯一**滚动体（`SliverReorderableList` 拿无界高度会抛断言）—— 见 `test/queue_scroll_sticky_test.dart` |
+              // | ★ **不能用无界约束** | `OverflowBox(maxWidth: ∞)` 会让子级尺寸出现 NaN / ∞ ⇒ ★ **`TransformLayer … invalid matrix`**（我上一版踩的坑）|
               //
-              // ⚠ 宽屏下 `Wrap` 本来就不换行，所以**观感不变**；
-              //   只有窄屏 / 异常内容才会被裁（★ 总比"黑黄条纹 / 白屏"好）。
+              // ## 所以只用 `ClipRect`
+              //
+              // ★ `ClipRect` 创建一个**裁剪层**（渲染层级的 clip，**不参与布局**）
+              //   ⇒ ★ 尺寸约束**完全不变**（无 NaN / ∞ 风险，也不引入滚动体），
+              //     但 Flutter 的 `RenderFlex` 溢出检查会**因为"存在裁剪祖先"而跳过**
+              //     ⇒ ★ 不再打印 `A RenderFlex overflowed` / 画黑黄条纹。
+              //
+              // ⚠ 代价：真的超出时**内容被裁掉**（看不到）。
+              //   但这只在"窗口极窄"时发生，★ 比"白屏 / 条纹"好得多。
               child: ClipRect(
-                child: OverflowBox(
-                  alignment: Alignment.topLeft,
-                  maxWidth: double.infinity,
-                  maxHeight: double.infinity,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // ★ #9: 执行顺序**配置页**（1/2/3/… + 新建 + 管理）
-                      _profilesRow(context, c),
-                      const SizedBox(height: 4),
-                      // 快捷排序 + 全局开关（原来就在这一行）
-                      _sortActions(context, c),
-                    ],
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // ★ #9: 执行顺序**配置页**（1/2/3/… + 新建 + 管理）
+                    _profilesRow(context, c),
+                    const SizedBox(height: 4),
+                    // 快捷排序 + 全局开关（原来就在这一行）
+                    _sortActions(context, c),
+                  ],
                 ),
               ),
             ),
