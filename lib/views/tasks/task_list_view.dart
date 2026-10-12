@@ -1468,6 +1468,30 @@ class _QueueTab extends StatelessWidget {
     // ⚠ 本 tab **绝不能**再套 `ListView`/`SingleChildScrollView` ——
     //   那就是"滚动套滚动", Flutter 会抛"垂直方向无界高度"（踩过）。
     return CustomScrollView(
+      // ★★★ 2026-10-12 修一个用户报的 bug：**滚动条被一直"翻回顶部"** ★★★
+      //
+      // ## ★★ 用户原话
+      //
+      // > "我在**滑动滚动条**时，页面会**一直自动把页面往上翻**，而且很频繁，
+      // >  表现为，我滑动滚动条到**下边点击其它任务的开始按钮**时，
+      // >  **很难点到**，直接**划到上边**了"
+      //
+      // ## ★ 根因
+      //
+      // * ★ `task_list_controller` 的 `_queuePoller` **每 3 秒**拉一次 `/run_list`
+      // * ★ 而【脚本在跑时】`running` 标记 / 计数**每轮都在变**
+      //   ⇒ ★ `_queueEntriesDiffer()` 恒为 `true` ⇒ ★ **每 3 秒 `update()`**
+      //     ⇒ ★ 整个 `GetBuilder` 子树**重建**
+      // * ★ 而 `CustomScrollView` **没有 `PageStorageKey`**
+      //   ⇒ ★ 重建时**滚动偏移被重置到 0**（回到顶部）
+      //   ⇒ ★★ 表现就是"一直被翻回上边、点不到下面的行"
+      //
+      // ## ★ 修法
+      //
+      // ★ 给 `CustomScrollView` 一个 **`PageStorageKey`**
+      //   ⇒ ★ Flutter 会把滚动偏移**按 key 存进 `PageStorage`**
+      //   ⇒ ★ 重建后**恢复**原来的位置（★ 不再跳回顶部）
+      key: const PageStorageKey<String>('queue-scroll'),
       slivers: [
         // ★★★ 吸顶区（pinned: true）★★★
         SliverPersistentHeader(
