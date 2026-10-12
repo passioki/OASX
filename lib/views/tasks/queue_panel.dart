@@ -764,11 +764,11 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                         )),
               ),
               Expanded(
-                // ★ 步骤②：`Row` -> `Wrap`（自适应换行）
-                child: Wrap(
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 4,
-                  runSpacing: 2,
+                // ★ 步骤③（分步法）：**回到 `Row`** ——
+                //   因为 `Wrap` 下标题拿不到"剩余宽度"，
+                //   后面的标记/按钮**紧贴标题**（用户看到"被分隔成几段"）。
+                //   ⇒ ★ `Row` + `Flexible(标题)` 才能让标题**占满剩余宽度**。
+                child: Row(
                   children: [
                     // ★★ ③: 类别小标签 —— 「定时」/「固定」★★
                     //
@@ -1068,8 +1068,9 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                     // ⚠ 这一行 `Flexible(` **必须留着** ——
                     //   我第一次插标记时把它挤掉了, `flutter analyze` 立刻报
                     //   `Undefined name 'child'`（下一个 widget 的 child 悬空）。
-                      // ★ 步骤①：去掉 `Flexible` 包装（标题直接在容器里）
-                      Text(
+                    // ★ 步骤③：**恢复** `Flexible`（让标题占满剩余宽度）
+                    Flexible(
+                      child: Text(
                         // ★★★ 休息任务的标题（用户裁定 乙-A）★★★
                         //
                         // > "休息就是临时任务（回庭院待着），只不过可以选择
@@ -1095,7 +1096,7 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                             ),
                         overflow: TextOverflow.ellipsis,
                       ),
-                    // ★ 步骤①：原来的 `Flexible(` 已去掉
+                    ),
                     if (isTask && isAuto) ...[
                       const SizedBox(width: 6),
                       Tooltip(
