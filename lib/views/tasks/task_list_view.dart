@@ -1415,16 +1415,41 @@ class _QueueTab extends StatelessWidget {
             child: Container(
               color: Theme.of(context).scaffoldBackgroundColor,
               padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // ★ #9: 执行顺序**配置页**（1/2/3/… + 新建 + 管理）
-                  _profilesRow(context, c),
-                  const SizedBox(height: 4),
-                  // 快捷排序 + 全局开关（原来就在这一行）
-                  _sortActions(context, c),
-                ],
+              // ★★★ 吸顶区内容：**纵向、横向都不可能溢出** ★★★
+              //
+              // ## ★★ 用户实测报的两种溢出 ★★
+              //
+              // > "**Bottom overflowed by 60 pixels**"（纵）
+              // > "**right lowered by 41 pixels**"（★ 横）
+              //
+              // ★ 外层 `_StickyQueueHeader` 已经用"固定高度 + 零滚动体"
+              //   解决了**纵向**（见那边的说明）。
+              // ★ 这里是**横向**的保险：`ClipRect` + `OverflowBox`。
+              //
+              // | 组件 | 作用 |
+              // |---|---|
+              // | `ClipRect` | ★ **裁掉**超出部分 —— 顺带**抑制 `RenderFlex overflowed` 报错**（Flutter 只在"没有裁剪祖先"时报）|
+              // | `OverflowBox(maxWidth: ∞)` | ★ 给子级**无界宽度** ⇒ `Wrap` / `Row` 按**自身**宽度布局，**不会**因空间不足而溢出 |
+              //
+              // ⚠ 宽屏下 `Wrap` 本来就不换行，所以**观感不变**；
+              //   只有窄屏 / 异常内容才会被裁（★ 总比"黑黄条纹 / 白屏"好）。
+              child: ClipRect(
+                child: OverflowBox(
+                  alignment: Alignment.topLeft,
+                  maxWidth: double.infinity,
+                  maxHeight: double.infinity,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // ★ #9: 执行顺序**配置页**（1/2/3/… + 新建 + 管理）
+                      _profilesRow(context, c),
+                      const SizedBox(height: 4),
+                      // 快捷排序 + 全局开关（原来就在这一行）
+                      _sortActions(context, c),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
