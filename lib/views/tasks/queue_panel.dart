@@ -764,7 +764,11 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                         )),
               ),
               Expanded(
-                child: Row(
+                // ★ 步骤②：`Row` -> `Wrap`（自适应换行）
+                child: Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 4,
+                  runSpacing: 2,
                   children: [
                     // ★★ ③: 类别小标签 —— 「定时」/「固定」★★
                     //
@@ -1064,8 +1068,8 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                     // ⚠ 这一行 `Flexible(` **必须留着** ——
                     //   我第一次插标记时把它挤掉了, `flutter analyze` 立刻报
                     //   `Undefined name 'child'`（下一个 widget 的 child 悬空）。
-                    Flexible(
-                      child: Text(
+                      // ★ 步骤①：去掉 `Flexible` 包装（标题直接在容器里）
+                      Text(
                         // ★★★ 休息任务的标题（用户裁定 乙-A）★★★
                         //
                         // > "休息就是临时任务（回庭院待着），只不过可以选择
@@ -1091,7 +1095,7 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                             ),
                         overflow: TextOverflow.ellipsis,
                       ),
-                    ),
+                    // ★ 步骤①：原来的 `Flexible(` 已去掉
                     if (isTask && isAuto) ...[
                       const SizedBox(width: 6),
                       Tooltip(

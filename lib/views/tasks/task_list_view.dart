@@ -126,14 +126,31 @@ class _TaskListViewState extends State<TaskListView> {
   // ★ 之前默认收起, 用户每次进来都要先点一下才看得到汇报。
   bool _reportOpen = true;
 
-  /// 抽屉宽度（宽屏用）。`final` 就好 —— 目前不提供拖拽调整宽度。
-  final double _reportWidth = 380;
+  /// 抽屉宽度（宽屏用）。
+  ///
+  /// ★★★ 2026-10-12 用户裁定：**控件/窗口/页面区域都要【自适应】** ★★★
+  ///
+  /// > "除了**按钮**以外，所有的**控件、窗口、页面区域**等等**不能自适应**
+  /// >  大小吗？因为**窗口是可以任意调整**的，不同尺寸的窗口，UI 会跟着变化，
+  /// >  你说的这个宽度也会有变化。"
+  ///
+  /// ★ ⇒ ★ 所以这里**不再用死值 380**，改成**按可用宽度的比例**：
+  ///   * ★ 窄窗口 ⇒ 抽屉**跟着窄**（★ 不把左栏挤爆）
+  ///   * ★ 宽窗口 ⇒ 抽屉**封顶 380**（★ 保持原观感，不让它无限变宽）
+  ///   * ★ 下限 `220` —— ★ 低于这个宽度简报就没法读了。
+  ///
+  /// ⚠ **按钮是例外**（用户明确的例外）：★ 按钮要有**最小点击尺寸**
+  ///   （`BoxConstraints(minWidth: 28, minHeight: 28)` 之类）——
+  ///   ★ 那是**可点性**要求，不是"布局定宽"。
+  double _reportWidthFor(double maxWidth) =>
+      (maxWidth * 0.28).clamp(220.0, 380.0);
 
   /// ★★ ① **任务汇报抽屉** ★★
   ///
   /// 只在 `_reportOpen` 为真时渲染（见 `build` 里的宽屏/窄屏两处），
   /// 带一个短促的**滑入动画**。
-  Widget _reportDrawer(BuildContext context, TaskListController c) {
+  Widget _reportDrawer(BuildContext context, TaskListController c,
+      [double maxWidth = 1200]) {
     return TweenAnimationBuilder<double>(
       // 展开时从 0 -> 1 播一次。收起是**直接移除**（不做反向动画）,
       // 免得和 `Stack` 的布局抢帧。
@@ -146,7 +163,7 @@ class _TaskListViewState extends State<TaskListView> {
         child: child,
       ),
       child: SizedBox(
-        width: _reportWidth,
+        width: _reportWidthFor(maxWidth),
         child: Column(
           children: [
             // ★★★ 「运行日志」界面 + 它的按钮（用户要求）★★★
@@ -472,12 +489,18 @@ class _TaskListViewState extends State<TaskListView> {
                         //
                         // ★ 拖动条只在抽屉打开时渲染, 所以关着时不需要
                         //   "留出可拖的范围"。
+                        final double _repW = _reportWidthFor(box.maxWidth);
                         final double reserved =
-                            _reportOpen ? _reportWidth + 1 : 0.0;
+                            _reportOpen ? _repW + 1 : 0.0;
+                        // ★ 左栏下限：★ 也会跟着窗口缩（不再死守 240）
+                        //   —— ★ 用户要"任意窗口都自适应"。
+                        final double _floor =
+                            (box.maxWidth * 0.30).clamp(180.0, 420.0);
+                        final double _minL = minLeft < _floor ? minLeft : _floor;
                         final double maxLeft = (box.maxWidth - reserved)
-                            .clamp(minLeft, box.maxWidth);
+                            .clamp(_minL, box.maxWidth);
                         final double left =
-                            _splitWidth.clamp(minLeft, maxLeft);
+                            _splitWidth.clamp(_minL, maxLeft);
                         return Stack(
                           children: [
                             Positioned.fill(
@@ -503,7 +526,7 @@ class _TaskListViewState extends State<TaskListView> {
                                     //             改为可以收纳的形式（点一下从右边滑出来）"
                                     //   开关在顶部工具条的「简报」按钮。
                                     const VerticalDivider(width: 1),
-                                    _reportDrawer(context, c),
+                                    _reportDrawer(context, c, box.maxWidth),
                                   ] else
                                     Expanded(
                                       child: _bodyFor(context, c),
@@ -559,7 +582,12 @@ class _TaskListViewState extends State<TaskListView> {
                           const Divider(height: 1),
                           SizedBox(
                               height: 260,
-                              child: _reportDrawer(context, c)),
+                              // ★ 窄屏：抽屉**横向占满**（它已在 Column 里，
+                              //   `SizedBox` 不给 width ⇒ 由父级拉伸）
+                              //   ⇒ ★ 用户要的"自适应"。
+                              child: _reportDrawer(
+                                  context, c,
+                                  MediaQuery.of(context).size.width)),
                         ],
                       ],
                     ),
