@@ -1285,8 +1285,20 @@ void _phase2Tests() {
     //   ⇒ 断言改成钉住**新的数据来源**。
     expect(q.contains("e['running']"), isTrue,
         reason: '★ 行内"运行中"标记必须读后端的 e["running"]');
-    expect(q.contains("e['runs']"), isTrue,
-        reason: '★ 行内"已运行 N 次"必须读后端的 e["runs"]');
+    // ★★ 两份记录（用户裁定）之后，展示改读 **`total_runs`** ★★
+    //
+    // > "一份**临时记录**只保留到当前（任务/周期）结束，
+    // >  **另一份共用的总记录**用于**结果展示**。"
+    //
+    // | 字段 | 内容 | 生命周期 |
+    // |---|---|---|
+    // | `runs` | 本轮/本周期已跑几次（**判据**）| 新一轮**清零** |
+    // | ★ `total_runs` | **累计**（**展示用**）| ★ **永不清零** |
+    //
+    // ⚠ 展示必须读 `total_runs` —— 读 `runs` 的话，新一轮清零时
+    //   "已运行 N 次"会**跟着归零**（那就不是"总记录"了）。
+    expect(q.contains("e['total_runs']"), isTrue,
+        reason: '★ 行内"已运行 N 次"必须读后端的 e["total_runs"]（**总记录**，永不清零）');
     // ★ 行内标记存在（"运行中" / "已运行 N 次"）
     expect(q.contains('运行中'), isTrue, reason: '缺「运行中」行内标记');
     expect(q.contains('已运行'), isTrue, reason: '缺「已运行 N 次」行内标记');

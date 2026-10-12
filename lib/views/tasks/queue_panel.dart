@@ -906,16 +906,29 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                           ),
                         );
                       }),
-                    ] else if (isTask && ((e['runs'] as num?)?.toInt() ?? 0) > 0) ...[
-                      // ★ 跑过 -> 显示跑了几次（用户要求："状态标记为已运行X次"）
+                    ] else if (isTask &&
+                        ((e['total_runs'] as num?)?.toInt() ?? 0) > 0) ...[
+                      // ★★★ 读 **`total_runs`**（累计），不是 `runs`（本轮/本周期）★★★
+                      //
+                      // ## ★★ 用户裁定（两份记录）★★
+                      //
+                      // > "一份**临时记录**只保留到当前（任务/周期）结束，
+                      // >  **另一份共用的总记录**用于**结果展示**。"
+                      //
+                      // | 字段 | 内容 | 生命周期 |
+                      // |---|---|---|
+                      // | `runs` | 本轮/本周期已跑几次（**判据**）| 新一轮**清零** |
+                      // | ★ `total_runs` | **累计**（**展示用**）| ★ **永不清零** |
+                      //
+                      // ⚠ 展示若读 `runs`，新一轮清零时"已运行 N 次"会**跟着归零**。
                       Tooltip(
-                        message: '★ **已运行 N 次** —— 这一条在本页（歌单）里'
-                            '已经跑过的次数。\n'
-                            '★ 计数**按条目**记（同一任务的多条条目互不混淆），'
-                            '存盘在 `task_state`，重启后端不丢。',
+                        message: '★ **已运行 N 次** —— 这一条**累计**跑过的次数。\n'
+                            '★ 它取自**总记录**（`total_runs`）—— **永不清零**，\n'
+                            '  所以换新一轮/新周期后这个数字**不会被抹掉**。\n'
+                            '★ 计数**按条目**记（同一任务的多条条目互不混淆）。',
                         child: _queueBadge(
                           context,
-                          text: '已运行 ${(e['runs'] as num).toInt()} 次',
+                          text: '已运行 ${(e['total_runs'] as num).toInt()} 次',
                           color: Colors.blueGrey,
                           icon: Icons.check,
                         ),
