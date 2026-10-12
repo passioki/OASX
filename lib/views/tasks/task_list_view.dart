@@ -413,10 +413,43 @@ class _TaskListViewState extends State<TaskListView> {
                         //   * 抽屉开 -> 留 `380 + 1`（抽屉 + 分隔线）
                         //   * 抽屉关 -> 留 320（原来那个"别把自己拖没"的下限）
                         //
-                        // ★ 同时给 `maxLeft` 加**下界保护**（`>= 420`）——
-                        //   窄窗口下 `maxWidth - 380` 可能小于 420, 那样
-                        //   `clamp(420, maxLeft)` 会因为 `lower > upper` 而**抛异常**。
-                        const double minLeft = 420;
+                        // ★★★ 2026-10-12 根因修复：`minLeft` **按可用宽度自适应** ★★★
+                        //
+                        // ## ★★ 用户报的 bug（★ 一直是同一个）
+                        //
+                        // > "**执行顺序页面直接白屏了**"
+                        // > "初始的 **1 号配置页没有白屏**；**新建的额外配置页**
+                        // >  运行脚本、一旦开启配置了任务，开启脚本后就会使执行
+                        // >  顺序**白屏**，只有**清空队列**才会消失"
+                        // > "**debug 没有白屏，release 有白屏**"
+                        // > "没看到黄黑条纹，但是有这个白底红字提示：
+                        // >  **right: overflowed by 25 pixels**，**简报展开时出现**"
+                        //
+                        // ## ★★★ 根因（三段）
+                        //
+                        // ```
+                        // ① 简报抽屉展开 ⇒ 左栏可用宽 = maxWidth - 381
+                        // ② 原来 minLeft 是【死值 420】
+                        //    ⇒ 窄窗口下 maxLeft 也≈420 ⇒ clamp(420, 420)
+                        //    ⇒ ★ 左栏被压到 420px
+                        // ③ 而左栏里装着【吸顶区】（配置页行 + 快捷排序 + 全局开关，
+                        //    内容宽 ≈745px）
+                        //    ⇒ ★ 左栏 420px 装不下 ⇒ ★★ RenderFlex overflow
+                        //    ⇒ ★ debug：红字 / 条纹；★ release：**白屏**
+                        // ```
+                        //
+                        // ★ 为什么"**只有额外配置页**"才白屏：
+                        //   ★ 配置页（歌单）越多 ⇒ **配置页那一行越宽**
+                        //     ⇒ ★ 越容易超过左栏宽度。
+                        //
+                        // ## ★ 修法（★ 不再用死值）
+                        //
+                        // ★ `minLeft` = **按可用宽度的比例**，并留绝对下限：
+                        //   * ★ 宽窗口：仍是 **420**（保持原观感）
+                        //   * ★ 窄窗口：★ **跟着缩**（★ 宁可左栏窄，也不让内容溢出）
+                        // ★ 下限 `240` 是"还能看出是一列"的最小宽度。
+                        final double minLeft =
+                            (box.maxWidth * 0.45).clamp(240.0, 420.0);
                         // ★★ 用户报的 bug（抽屉收起后右侧大片空白）★★
                         //
                         // ## 原来的错误
@@ -1438,16 +1471,39 @@ class _QueueTab extends StatelessWidget {
               //
               // ⚠ 撤掉后溢出报错会重新出现（debug 会画条纹）——
               //   ★ 这正是我们要的**诊断信息**。
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // ★ #9: 执行顺序**配置页**（1/2/3/… + 新建 + 管理）
-                  _profilesRow(context, c),
-                  const SizedBox(height: 4),
-                  // 快捷排序 + 全局开关（原来就在这一行）
-                  _sortActions(context, c),
-                ],
+              //
+              // ★★★ 2026-10-12 根因修复（第二层）：**按需缩放** ★★★
+              //
+              // ★ 第一层修的是 `minLeft`（不再死守 420 ⇒ 窄窗口下左栏跟着缩）。
+              // ★ 但吸顶区的内容（配置页行 + 快捷排序 + 全局开关）**固有宽
+              //   ≈745px** —— 左栏再窄，它**自己**也不会变窄（`Wrap` 的单
+              //   child 超过可用宽度时无法再折）。
+              //
+              // ## 为什么用 `FittedBox(scaleDown)` 而不是裁剪/滚动
+              //
+              // | 方案 | 问题 |
+              // |---|---|
+              // | `ClipRect` | ★ 把内容**裁掉**（★ 用户看不到按钮 = 看起来"白"）|
+              // | `SingleChildScrollView` | ★ 测试禁止第二个滚动体（`_QueueTab` 必须是唯一滚动体）|
+              // | `OverflowBox(∞)` | ★ 无界约束 ⇒ **非法矩阵**（我踩过）|
+              // | ★ **`FittedBox(scaleDown)`** | ★ 内容**缩小**到放得下 —— ★ 不裁、不滚、不越界 |
+              //
+              // ★ 宽窗口下 `scaleDown` **不放大** ⇒ ★ **观感完全不变**；
+              //   只有"内容真的超过可用宽度"时才等比缩小（★ 至少按钮还点得到）。
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.topLeft,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // ★ #9: 执行顺序**配置页**（1/2/3/… + 新建 + 管理）
+                    _profilesRow(context, c),
+                    const SizedBox(height: 4),
+                    // 快捷排序 + 全局开关（原来就在这一行）
+                    _sortActions(context, c),
+                  ],
+                ),
               ),
             ),
           ),
