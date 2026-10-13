@@ -137,7 +137,7 @@ Future<void> initService() async {
   await initLogger();
 
   try {
-    await GetStorage.init();
+    await GetStorage.init('GetStorage-live');   // ★ 实机版独立容器，避免与 Dev 版共用
   } catch (e) {
     logger.w('GetStorage 初始化失败, 本次运行改用内存存储: $e');
   }
