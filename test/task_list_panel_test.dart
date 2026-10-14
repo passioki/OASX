@@ -1456,6 +1456,85 @@ void main() {
 
   // ★★★ [10-14] N9-7：周期任务的「运行中」标记 ★★★
   _n97RunningTagTests();
+
+  // ★★★ [10-14] N9-4：新建配置页**必须让用户填名字** ★★★
+  _n94CreateProfileNameTests();
+}
+
+// ============================================================ N9-4 新建页名
+//
+// ## ★★ 用户原话（[10-14] 记录文件第 4 条）
+//
+// > "**添加任务顺序配置页时，新建时填写的名称不会生效，
+// >   目前是用重命名来做到第一次赋予名字的。**"
+//
+// ## ★★ 真因（前端）
+//
+// ★ 旧实现**既不弹输入框、也不传 `name`**：
+// ```dart
+// final msg = await c.createQueueProfile();     // 旧代码
+// ```
+// ★ 而后端是 `name = data.get('name') or default_name`
+//   （`schema_router.py:2149`）⇒ ★ **永远自动编号**（`1/2/3`）。
+//
+// ## ★ 修法（照抄**已定案**的重命名对话框 —— 新建/改名对称）
+//
+// * ★ 新建时弹**同款**输入框；★ 填了就传 `name`
+// * ★ **取消 ⇒ 不新建**（不许偷偷建一页）
+// * ★ **留空 ⇒ 传 `name: null`**（★ 保留"懒得起名"的快捷路径 = 后端自动编号）
+//
+// ★ 这是**源码级**断言（视图层的对话框没法在无后端时点）；
+//   ★ 但与之配对的后端端点有**运行时**守卫：
+//     `tests/module/server/test_profile_name_from_user.py`（★ 5 条，注入验证真红）。
+void _n94CreateProfileNameTests() {
+  String viewSource() => File('lib/views/tasks/task_list_view.dart')
+      .readAsStringSync();
+
+  test('★ N9-4：新建配置页必须**弹输入框让用户填名字**', () {
+    final src = viewSource();
+    final idx = src.indexOf('Future<String?> _askProfileName(');
+    expect(idx, greaterThan(0),
+        reason: '前置：应能找到取名对话框 `_askProfileName`');
+    final body = src.substring(idx, idx + 1600);
+    expect(body.contains('showDialog<String>'), isTrue,
+        reason: '★ 新建**必须**弹对话框（旧实现直接建 ⇒ 用户没地方填名字）');
+    expect(body.contains("labelText: '页名'"), isTrue,
+        reason: '★ 输入框必须标「页名」（与重命名对话框同款）');
+    expect(body.contains("const Text('新建')"), isTrue,
+        reason: '★ 确认按钮应叫「新建」');
+    expect(body.contains("const Text('取消')"), isTrue,
+        reason: '★ 应有「取消」（取消 = 不新建）');
+  });
+
+  test('★ N9-4：新建必须把用户填的 `name` **传给控制器**', () {
+    final src = viewSource();
+    final idx = src.indexOf('Future<void> _createProfile(');
+    expect(idx, greaterThan(0), reason: '前置：应能找到 `_createProfile`');
+    final body = src.substring(idx, idx + 900);
+    expect(body.contains('c.createQueueProfile('), isTrue,
+        reason: '前置：应调用控制器的 `createQueueProfile`');
+    expect(body.contains('name:'), isTrue,
+        reason: '★ **必须传 `name:`** —— 旧代码是 `c.createQueueProfile()`'
+            '（不带参数）⇒ 后端永远走自动编号 ⇒ 用户填的名字不生效（N9-4）');
+  });
+
+  test('★ N9-4：**取消 ⇒ 不新建**（不许偷偷建一页）', () {
+    final src = viewSource();
+    final idx = src.indexOf('Future<void> _createProfile(');
+    final body = src.substring(idx, idx + 900);
+    expect(body.contains('if (name == null) return;'), isTrue,
+        reason: '★ 对话框被取消（返回 null）时**必须直接 return** —— '
+            '否则用户点了「取消」却多出一页，与预期相反');
+  });
+
+  test('★ N9-4：留空 ⇒ 回落**自动编号**（`name: null`）', () {
+    final src = viewSource();
+    final idx = src.indexOf('Future<void> _createProfile(');
+    final body = src.substring(idx, idx + 900);
+    expect(body.contains('name: name.isEmpty ? null : name'), isTrue,
+        reason: '★ 留空必须传 `null`（而不是空串）—— 与后端'
+            '`data.get("name") or default_name` 的语义配合，保留"懒得起名"路径');
+  });
 }
 
 // ============================================================ N9-7 运行中标记

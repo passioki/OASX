@@ -1717,9 +1717,74 @@ class _QueueTab extends StatelessWidget {
         duration: const Duration(seconds: 4));
   }
 
-  /// 新建一页（后端自动编号 + 立即切过去）。
+  /// 弹出「新建配置页」的**取名对话框**（★ 用户点了「新建」才走到这里）。
+  ///
+  /// :return 用户填的名字（★ **空串** = 用户选择"留空、自动编号"）；
+  ///         ★ **`null` = 用户取消**（调用方必须**不新建**）。
+  ///
+  /// ## ★★ 用户原话（[10-14] 记录第 4 条）
+  ///
+  /// > "**添加任务顺序配置页时，新建时填写的名称不会生效，
+  /// >   目前是用重命名来做到第一次赋予名字的。**"
+  ///
+  /// ★ 与 `_renameProfile` 用**同一款式**的输入框（新建/改名**对称**）——
+  ///   ★ 文案里的例子也一致，用户不用学两套。
+  Future<String?> _askProfileName(BuildContext context) {
+    final ctrl = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('新建配置页'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          maxLength: 24,
+          decoration: const InputDecoration(
+            isDense: true,
+            labelText: '页名',
+            helperText: '比如「日常 / 周末 / 肝活动」—— 一眼知道那页是干什么的\n'
+                '★ 留空则自动编号',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('新建'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 新建一页（★ [10-14] N9-4：**先让用户填名字**，再交给后端）。
+  ///
+  /// ## ★★ 真因（前端，有代码证据）
+  ///
+  /// ★ 旧实现**既不弹输入框、也不传 `name`**：
+  /// ```dart
+  /// final msg = await c.createQueueProfile();   // ★ 不传 name
+  /// ```
+  /// ★ 而后端是 `name = data.get('name') or default_name`
+  ///   （`schema_router.py:2149`）⇒ ★ **永远走自动编号**（`1/2/3`）
+  ///   ⇒ ★ 用户"填的名字"**根本没机会传上去**。
+  /// ★ 更基本的问题：★ 旧实现**压根没让用户填** —— 所以"不生效"其实是
+  ///   "没地方填"（★ 只能事后用 `[⋯ 管理] → 重命名` 补）。
+  ///
+  /// ## ★ 修法
+  ///
+  /// ★ 取名对话框（`_askProfileName`）⇒ ★ 填了就传 `name`；
+  ///   ★ 取消（`null`）⇒ **不新建**；★ 留空 ⇒ 传 `null`
+  ///   ⇒ ★ 后端自动编号（保留"懒得起名"的快捷路径）。
   Future<void> _createProfile(BuildContext context, TaskListController c) async {
-    final msg = await c.createQueueProfile();
+    final name = await _askProfileName(context);
+    if (name == null) return;                       // ★ 取消 ⇒ 不新建
+    if (!context.mounted) return;
+    final msg = await c.createQueueProfile(
+        name: name.isEmpty ? null : name);
     if (!context.mounted) return;
     Get.snackbar('已新建配置页', msg,
         snackPosition: SnackPosition.BOTTOM,
