@@ -35,7 +35,7 @@
 | **F5** | ★★ **「运行中」标记只覆盖 `run_list` 的行** —— 自动补齐行已在 `N9-7` 修好，★ 但**其余状态标记**（「已运行 N 次」）是否也该覆盖自动行？需**实机核对** | `lib/controller/task_list/task_list_controller.dart`（`queuedTaskRows` 的 ② 段）| ⬜ 待核 | ★ 实机：开一个周期任务，看它的行有没有「已运行 N 次」 |
 | **F6** | ★★ **i18n 缺 `zh-CN.json`** —— 后端 4 条测试因此红（★ `module/config/i18n/zh-CN.json` 不存在）。★ 该文件的**生产者是前端**（经 `/chinese_translate` 推给后端）⇒ ★ 需确认**前端在什么时机推**、★ 是否要**开机自动推一次** | 后端台账 §C 的 `F-baseline-attrib` · 前端 `lib/service/locale_service.dart` | ⬜ 待核 | ★ 起后端 + 前端 ⇒ 看 `module/config/i18n/zh-CN.json` 是否出现 |
 | **F7** | ★ **`generated_plugin*` 生成物反复变脏** —— 每次 `flutter pub get` / `flutter test` 都会改 7 个文件（linux/macos/windows 各 2-3 个），★ 让 worktree 长期不干净 ⇒ ★ 每次提交都要手动 `git checkout --`（本轮做了 3 次）| `linux/flutter/generated_plugin_registrant.*` · `windows/flutter/...` · `macos/Flutter/GeneratedPluginRegistrant.swift` | ⬜ 待决 | ★ 方案 A：加入 `.gitignore`（但它们是上游生成的、**曾被提交**⇒ 需要 `git rm --cached`）；★ 方案 B：保持现状，提交前手动还原 |
-| **F8** | ★ **前端没有"自动化测试基线"记录** —— 后端台账有"49 failed / 1785 passed"这样的**可核查基线**；★ 前端只有"157 passed"一个数 | `test/`（10 个测试文件）| ⬜ 待补 | ★ 记录：`flutter test` = **157 passed**（[10-14]）· `flutter analyze` = 4 条**既有 info**（无 error）|
+| **F8** | ★ **前端没有"自动化测试基线"记录** —— 后端台账有"49 failed / 1785 passed"这样的**可核查基线**；★ 前端只有"157 passed"一个数 | `test/`（10 个测试文件）| ⬜ 待补 | ★ 记录：`flutter test` = **158 passed**（★ [10-14] 实测订正，原写 157）· `flutter analyze` = **0 error（4 warning + 17 info）**（★ 原写"4 条既有 info"**不准**，已订正）|
 
 ## ★ 二、已完成（★ 本轮 [10-14]，均有可核查证据）
 
