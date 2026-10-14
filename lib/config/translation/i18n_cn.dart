@@ -107,6 +107,8 @@ final Map<String, String> _cn_ui = {
   I18n.other_world_twilight: '彼世逢魔',
   I18n.quiz: '智力竞赛',
   I18n.six_realms: '六道之门',
+  // ---- 以下由 dev_tools/gen_i18n.py 从 tasks/<Name>/meta.py 生成; 请勿手改 ----
+  I18n.flow_demo: '流程示例',
 };
 
 final Map<String, String> _cn_menu = {

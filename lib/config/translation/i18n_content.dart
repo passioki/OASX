@@ -276,4 +276,6 @@ class I18n {
   static const String other_world_twilight = 'OtherWorldTwilight';
   static const String quiz = 'Quiz';
   static const String six_realms = 'SixRealms';
+  // ---- 以下由 dev_tools/gen_i18n.py 从 tasks/<Name>/meta.py 生成; 请勿手改 ----
+  static const String flow_demo = 'FlowDemo';
 }
