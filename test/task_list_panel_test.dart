@@ -1453,6 +1453,129 @@ void main() {
   _phase1Tests();
 
   _phase2Tests();
+
+  // ★★★ [10-14] N9-7：周期任务的「运行中」标记 ★★★
+  _n97RunningTagTests();
+}
+
+// ============================================================ N9-7 运行中标记
+//
+// ## ★★ 用户原话（10-14 记录文件第 7 条；前端注释里也留着同一句）
+//
+// > "**周期任务运行时，没有正在运行之类的状态tag**"
+//
+// ## ★★ 真因（三层，都有代码证据）
+//
+// * ① 队列行的标记读 `/run_list` 每条目的 `running`（`queue_panel.dart:864`）
+// * ② 而 `/run_list` **只遍历 `run_list`**（`schema_router.py:1256`）
+//   ⇒ ★ **自动进队列的周期任务不在那份数据里**
+// * ③ 后端 `running_entry_id = config.task.entry_id`（`script.py:1170`），
+//   而周期任务 **`entry_id = None`**（`config.py:2435` 只给 run_list 条目写）
+//   ⇒ ★ `running_entry_id` **恒为空串** ⇒ 拿不到条目身份
+//
+// ## ★ 修法（数据层一处）：给"自动补齐的行"补 `running`
+//
+// * ★ 没有 `entry_id` ⇒ ★ 退回**按任务名比** `runningTaskCommand`
+//   （★ 与后端 `schema_router.py:1282-1284` 的兜底**同一口径**）
+// * ★ 防重复：★ 同任务若已有**条目行**在跑 ⇒ 自动行**不重复标记**
+//
+// ★ 这些是**运行时断言**（不是"源码里有没有某个字符串"）——
+//   ★ 因为源码级断言在本项目已被证明会**空转**（台账 §C.3 教训 C）。
+void _n97RunningTagTests() {
+  /// 让"正在运行的任务"可控（真实现要走 `ScriptService`，测试里没有）。
+  TaskListController make(Map<String, dynamic>? runningTask,
+      {List<Map<String, dynamic>>? entries}) {
+    return _RunningStub(
+      running: runningTask == null
+          ? ''
+          : '${runningTask['task'] ?? runningTask['command'] ?? ''}',
+      entries: entries ??
+          const [
+            {'kind': 'task', 'task': 'RealmRaid', 'entry_id': 'e-realmraid'},
+          ],
+      tasks: const [
+        {
+          'command': 'RealmRaid',
+          'name_zh': '结界突破',
+          'queued': true,
+          'auto_queue': false,
+          'enable': true,
+          'priority_group': 'fixed',
+        },
+        {
+          'command': 'AbyssShadows',
+          'name_zh': '狭间暗域',
+          'queued': true,
+          'auto_queue': true,
+          'enable': true,
+          'priority_group': 'timed',
+        },
+      ],
+    );
+  }
+
+  test('★★ N9-7：周期任务（自动补齐行）运行时，必须带上 running 标记', () {
+    final c = make({'task': 'AbyssShadows'});
+    final rows = c.queuedTaskRows;
+    final auto = rows.firstWhere((r) => '${r['task']}' == 'AbyssShadows');
+    expect('${auto['_auto']}', 'true', reason: '前置：它应是自动补齐的行');
+    expect('${auto['_entryId']}', '', reason: '前置：自动行没有条目身份');
+    expect(auto['running'], isTrue,
+        reason: '★ 周期任务正在跑 ⇒ 它那一行必须 `running == true`'
+            '（否则界面不会显示「运行中」—— 正是用户报的 N9-7）');
+  });
+
+  test('★ N9-7 反向：没有任务在跑 ⇒ 任何行都不许标 running', () {
+    final c = make(null);
+    for (final r in c.queuedTaskRows) {
+      expect(r['running'], isNot(true),
+          reason: '★ 没有任务在跑时不许出现「运行中」'
+              '（task=${r['task']}）');
+    }
+  });
+
+  test('★ N9-7 防重复：条目行自己在跑 ⇒ 自动行不许再亮（同任务两行都亮=错）', () {
+    // ★ 造"后端说【条目行】正在跑"的场景：`running: true` + 条目身份
+    //   （真实数据里这是后端按 `running_entry_id` 判的 —— 最准的那一路）
+    final c = make({'task': 'AbyssShadows'}, entries: [
+      {
+        'kind': 'task',
+        'task': 'AbyssShadows',
+        'entry_id': 'e-1',
+        'running': true,
+      },
+    ]);
+    final rows = c.queuedTaskRows;
+    final abyss = rows.where((r) => '${r['task']}' == 'AbyssShadows').toList();
+    expect(abyss.length, 1,
+        reason: '前置：已编排的任务**不会**再补出自动行（自动补齐只补"没编排过"的）');
+    expect(abyss.first['running'], isTrue,
+        reason: '★ 条目行带着后端的 `running`（条目身份判据）⇒ 应亮');
+    expect(rows.where((r) => r['running'] == true).length, 1,
+        reason: '★ **同任务只许亮一行** —— 界面两行都显示「运行中」是错的');
+  });
+
+  test('★ N9-7 反向：运行中**不在队列**的任务 ⇒ 队列里不出现标记', () {
+    final c = make({'task': 'Orochi'});   // ★ 不在 `_tasks` 里
+    for (final r in c.queuedTaskRows) {
+      expect(r['running'], isNot(true),
+          reason: '★ 只有队列里有那一行时才谈得上标记（task=${r['task']}）');
+    }
+  });
+}
+
+/// ★ N9-7 用：把"正在运行的任务名"打桩，其余走真实现。
+class _RunningStub extends FakeTaskListController {
+  _RunningStub({
+    required this.running,
+    required super.entries,
+    required super.tasks,
+  });
+
+  final String running;
+
+  @override
+  String get runningTaskCommand => running;
 }
 
 // ============================================================ 切换账号

@@ -1593,6 +1593,43 @@ class TaskListController extends GetxController with LogMixin {
 
   /// * `_queuedRow == true`  -> 后端 `queued` 里有、但 `entries` 里没有
   ///   （即自动补齐的）, 首次拖动时才写入 `run_list`
+  ///
+  /// ★★★ [10-14] N9-7：**自动补齐的行也要能显示「运行中」** ★★★
+  ///
+  /// ## ★★ 用户原话（他 10-10 就报过，本轮记录文件第 7 条）
+  ///
+  /// > "**周期任务运行时，没有正在运行之类的状态tag**"
+  /// > （前端注释里也留着同一句：`task_list_controller.dart:351`
+  /// >   "**启动脚本时，周期任务上正在运行的状态没有出现，
+  /// >    暂停调度也没有出现。**"）
+  ///
+  /// ## ★★ 真因（三层，都有代码证据）
+  ///
+  /// ★ ① 队列行的标记读 **`/run_list` 每条目的 `running`**
+  ///   （`queue_panel.dart:864` `e['running'] == true`）。
+  /// ★ ② 而 `/run_list` **只遍历 `run_list`**
+  ///   （`schema_router.py:1256` `for e in (rl.to_list() or [])`）
+  ///   ⇒ ★ **自动进队列的周期任务不在那份数据里** ⇒ ★ 拿不到 `running`。
+  /// ★ ③ 后端那边也帮不上：★ `script.py:1170` 记的
+  ///   `running_entry_id = self.config.task.entry_id`，
+  ///   而 `_order_by_queue()` **只给"在 `run_list` 里的条目"写 `entry_id`**
+  ///   （`config.py:2435`）⇒ ★ **周期任务 `entry_id = None`**
+  ///   ⇒ ★ `running_entry_id` **恒为空串**。
+  ///
+  /// ## ★ 修法（本处 = 数据层的唯一一处）
+  ///
+  /// ★ 给 ② 的行补 `running`：
+  ///   * ★ 没有 `entry_id` ⇒ ★ **不能**用"条目身份"判
+  ///     ⇒ ★ 退回**按任务名比** `runningTaskCommand`
+  ///     （★ 与后端 `schema_router.py:1282-1284` 在
+  ///       `running_eid` 为空时的**兜底口径完全一致** —— 不新造语义）。
+  ///   * ★ 若**已有条目行**在跑该任务（`entry_id` 命中）
+  ///     ⇒ ★ 本行**不重复标记**（★ 防"两行都显示运行中"）。
+  ///
+  /// ⚠ 为什么不改后端：★ 给周期任务补合成 `entry_id` 会动
+  ///   `build_queue()` / `_order_by_queue()`（★ 台账 `S3b` 就躺在那里，
+  ///   且"队列权威"类测试对它有硬约束 —— 134 条队列测试）⇒ ★ 风险远大于收益；
+  ///   而**前端本来就已经有那一行了**，缺的只是这一个标记。
   List<Map<String, dynamic>> get queuedTaskRows {
     final out = <Map<String, dynamic>>[];
     // ① entries（用户编排, 含休息, **含重复条目**）—— 保持原顺序
@@ -1645,6 +1682,17 @@ class TaskListController extends GetxController with LogMixin {
       for (final e in entries)
         if ('${e['kind']}' == 'task') '${e['task']}'
     };
+    // ★★★ [10-14] N9-7：★ 本次轮询里"**哪条任务**已由**条目身份**判为运行中" ★★★
+    //
+    // ★ 用它防重复标记：★ 若 `run_list` 里那条已经带着 `running: true`，
+    //   ★ 这里就**不要**再给"同任务的自动行"也打上「运行中」（否则两行都亮）。
+    final entryRunningCommands = <String>{
+      for (final e in entries)
+        if ('${e['kind']}' == 'task' && e['running'] == true)
+          '${e['task']}'
+    };
+    // ★ 运行中任务的**命令名**（WebSocket；★ 拿不到就是空串）
+    final runningCmd = runningTaskCommand;
     for (final t in queuedTasks) {
       final cmd = '${t['command']}';
       if (cmd.isEmpty || seen.contains(cmd)) continue;
@@ -1656,6 +1704,14 @@ class TaskListController extends GetxController with LogMixin {
         '_auto': true,
         '_entryId': '',
         '_addedAt': null,
+        // ★★★ N9-7 修复点：自动补齐的行也要能显示「运行中」★★★
+        //
+        // ★ 判据（与后端 `schema_router.py:1282-1284` 同一口径）：
+        //   没有条目身份 ⇒ ★ **退回按任务名比**。
+        // ★ 并加一道"防重复"：★ 同任务若已有条目行在跑 ⇒ 本行不算。
+        'running': runningCmd.isNotEmpty
+            && cmd == runningCmd
+            && !entryRunningCommands.contains(cmd),
       });
     }
     return out;
