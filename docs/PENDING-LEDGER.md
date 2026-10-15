@@ -38,7 +38,7 @@
 | **F8** | ★ **前端没有"自动化测试基线"记录** —— 后端台账有"49 failed / 1785 passed"这样的**可核查基线**；★ 前端只有"157 passed"一个数 | `test/`（10 个测试文件）| ⬜ 待补 | ★ 记录：`flutter test` = **158 passed**（★ [10-14] 实测订正，原写 157）· `flutter analyze` = **0 error（4 warning + 17 info）**（★ 原写"4 条既有 info"**不准**，已订正）|
 | **F9** | ★★★ **「恢复调度」有按钮、「暂停调度」没有**（★ 用户 [10-15] 报："**恢复调度按钮缺少了暂停调度**"）—— ★★ **真因 = 两个 `else if` 条件逐字相同 ⇒ `[⏸]` 分支是死代码** | ★ `lib/views/tasks/queue_panel.dart`：**`:1042`** 与 **`:1059`** 的条件**逐字相同**（都是 `else if (isTask && e['running'] == true)`）⇒ ★ `:1059`（`Icons.pause_circle_filled` + `_pauseSchedule`）**永不执行**；★ 佐证：全仓 `pause_circle_filled` **只此 1 处**（`:1072`）· `_pauseSchedule` **只此 1 处**（`:1071`）⇒ ★ **界面上完全没有"暂停调度"入口**；★ 另：`lib/views/tasks/run_control_bar.dart:13-19` 的类注释仍写"保留的三个按钮：⏸ 暂停调度 / ⏭ 本轮跑完再停 / ▶ 继续调度"，★ 而 `:183-276` 实际只剩「启动脚本 / 停止脚本」⇒ ★ **注释过期**（同一处 bug 的另一面）| ⬜ **待修**（★ 用户 [10-15] 本轮只要求"**添加到台账**"）| ★ 修法（最小）：★ **删掉 `:1042-1058` 这个多余分支** —— ★ 依据 SPEC **§3.6 现行口径**只有三条：★ 暂停中行 `[▶]` 恢复 · ★ 运行中行 `[⏸]` 暂停 · ★ 未运行行 `[▶]` 描边 ⇒ ★ **设计里没有第 4 条**；★ 删后 `:1059` 自然可达。★ 守卫建议：★ 断言"**运行中行的 `[⏸]` 必须可达**"（★ 静态断言"相邻 `else if` 条件不得逐字重复"最省事，★ 且能防同类回归）。★ 验证：`flutter analyze lib` **0 error** + `flutter test` **158 passed** + ★★ **注入验证**（把删掉的分支塞回去 ⇒ 守卫必须变红）。★ 关联规则：SPEC **§1.4-Z3** · **§3.4-L3** · **§3.6-L3** · **分歧块③ 现行口径** |
 
-| **F10** | ★★ **[10-15] 本机（开发机 `E:\OAS-dev`）缺 C++ 工具链 ⇒ 前端只能 `analyze`+`test`，**不能 `build windows`** | ★ 实测：无 `vswhere` · 无 VS 目录 · 无 `Windows Kits\10\bin` · 无 `cmake`/`ninja` · **无 `winget`** ⇒ `flutter build windows --release` 报找不到 Visual Studio | ⬜ **待裁定**（★ 装 VS 2022 Build Tools ＋ `Microsoft.VisualStudio.Workload.VCTools` + Win10/11 SDK；★ 见后端台账 **§E-6** · 后端 `START-HERE` **P17**）| ★ 装好后：`build windows --release` 成功 + 产出 `oasx-live.exe`，且 `analyze` 仍 **0 error** / `test` 仍 **158 passed** |
+| **F10** | ★★ **[10-15] 本机（开发机 `D:\OAS-dev`）缺 C++ 工具链 ⇒ 前端只能 `analyze`+`test`，**不能 `build windows`** | ★ 实测：无 `vswhere` · 无 VS 目录 · 无 `Windows Kits\10\bin` · 无 `cmake`/`ninja` · **无 `winget`** ⇒ `flutter build windows --release` 报找不到 Visual Studio | ⬜ **待裁定**（★ 装 VS 2022 Build Tools ＋ `Microsoft.VisualStudio.Workload.VCTools` + Win10/11 SDK；★ 见后端台账 **§E-6** · 后端 `START-HERE` **P17**）| ★ 装好后：`build windows --release` 成功 + 产出 `oasx-live.exe`，且 `analyze` 仍 **0 error** / `test` 仍 **158 passed** |
 
 ## ★ 二、已完成（★ 本轮 [10-14]，均有可核查证据）
 
@@ -62,7 +62,7 @@
 ## ★ 四、常用命令（★ 与后端 `DEV-WORKFLOW.md` 对齐）
 
 ```bat
-cd /d E:\OAS-dev\frontend
+cd /d D:\OAS-dev\frontend
 D:\flutter3271\bin\flutter.bat --no-version-check analyze lib   REM ★ 期望 0 error（[10-15] 本机实测：0 error / 4 warning / 17 info）
 D:\flutter3271\bin\flutter.bat --no-version-check test          REM ★ 期望 158 passed（★ [10-15] 本机实测 158 passed）
 D:\flutter3271\bin\flutter.bat --no-version-check build windows --release
@@ -73,9 +73,9 @@ build\windows\x64\runner\Release\oasx-live.exe        REM ★ 开发前端
 
 ★ **产物交接口**：★ 实机前端 = `D:\OAS-live\frontend\oasx-live.exe`
 （★ 由 `DEV-WORKFLOW.md §4` 的拷贝法部署）。
-★ ⚠ **[10-15] 实机在【另一台电脑】上**（★ 用户原话："本机是开发机"）⇒ ★ 本机（`E:\OAS-dev\frontend`）**没有** `D:\OAS-live`。
+★ ⚠ **[10-15] 实机在【另一台电脑】上**（★ 用户原话："本机是开发机"）⇒ ★ 本机（`D:\OAS-dev\frontend`）**没有** `D:\OAS-live`。
 
 ## ★ 五、相关文档
 
-* ★ 后端三件套：`E:\OAS-dev\backend\docs\` 的 `DESIGN-SPEC.md` · `PENDING-LEDGER.md` · `SESSION-HANDOFF.md`（★ [10-15] 本机路径 = `E:\OAS-dev`）
+* ★ 后端三件套：`D:\OAS-dev\backend\docs\` 的 `DESIGN-SPEC.md` · `PENDING-LEDGER.md` · `SESSION-HANDOFF.md`（★ [10-15] 本机路径 = `D:\OAS-dev`）
 * ★ 本仓内：`docs/scheduler-architecture.md`（调度器架构）· `docs/REST-TASK-LEDGER.md` · `docs/BUILD.md` · `docs/STARTUP-TROUBLESHOOTING.md`
