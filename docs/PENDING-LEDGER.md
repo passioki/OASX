@@ -35,7 +35,7 @@
 | **F5** | ★★ **「运行中」标记只覆盖 `run_list` 的行** —— 自动补齐行已在 `N9-7` 修好，★ 但**其余状态标记**（「已运行 N 次」）是否也该覆盖自动行？需**实机核对** | `lib/controller/task_list/task_list_controller.dart`（`queuedTaskRows` 的 ② 段）| ⬜ 待核 | ★ 实机：开一个周期任务，看它的行有没有「已运行 N 次」 |
 | **F6** | ★★ **i18n 缺 `zh-CN.json`** —— 后端 4 条测试因此红（★ `module/config/i18n/zh-CN.json` 不存在）。★ 该文件的**生产者是前端**（经 `/chinese_translate` 推给后端）⇒ ★ 需确认**前端在什么时机推**、★ 是否要**开机自动推一次** | 后端台账 §C 的 `F-baseline-attrib` · 前端 `lib/service/locale_service.dart` | ⬜ 待核 | ★ 起后端 + 前端 ⇒ 看 `module/config/i18n/zh-CN.json` 是否出现 |
 | **F7** | ★ **`generated_plugin*` 生成物反复变脏** —— 每次 `flutter pub get` / `flutter test` 都会改 7 个文件（linux/macos/windows 各 2-3 个），★ 让 worktree 长期不干净 ⇒ ★ 每次提交都要手动 `git checkout --`（本轮做了 3 次）| `linux/flutter/generated_plugin_registrant.*` · `windows/flutter/...` · `macos/Flutter/GeneratedPluginRegistrant.swift` | ⬜ 待决 | ★ 方案 A：加入 `.gitignore`（但它们是上游生成的、**曾被提交**⇒ 需要 `git rm --cached`）；★ 方案 B：保持现状，提交前手动还原 |
-| **F8** | ★ **前端没有"自动化测试基线"记录** —— 后端台账有"49 failed / 1785 passed"这样的**可核查基线**；★ 前端只有"157 passed"一个数 | `test/`（10 个测试文件）| ⬜ 待补 | ★ 记录：`flutter test` = **158 passed**（★ [10-14] 实测订正，原写 157）· `flutter analyze` = **0 error（4 warning + 17 info）**（★ 原写"4 条既有 info"**不准**，已订正）|
+| **F8** | ★ **前端没有"自动化测试基线"记录** —— 后端台账有"15 failed / 1785 passed"这样的**可核查基线**；★ 前端只有"157 passed"一个数 | `test/`（10 个测试文件）| ⬜ 待补 | ★ 记录：`flutter test` = **158 passed**（★ [10-14] 实测订正，原写 157）· `flutter analyze` = **0 error（4 warning + 17 info）**（★ 原写"4 条既有 info"**不准**，已订正）|
 | **F9** | ★★★ **「恢复调度」有按钮、「暂停调度」没有**（★ 用户 [10-15] 报："**恢复调度按钮缺少了暂停调度**"）—— ★★ **真因 = 两个 `else if` 条件逐字相同 ⇒ `[⏸]` 分支是死代码** | ★ `lib/views/tasks/queue_panel.dart`：**`:1042`** 与 **`:1059`** 的条件**逐字相同**（都是 `else if (isTask && e['running'] == true)`）⇒ ★ `:1059`（`Icons.pause_circle_filled` + `_pauseSchedule`）**永不执行**；★ 佐证：全仓 `pause_circle_filled` **只此 1 处**（`:1072`）· `_pauseSchedule` **只此 1 处**（`:1071`）⇒ ★ **界面上完全没有"暂停调度"入口**；★ 另：`lib/views/tasks/run_control_bar.dart:13-19` 的类注释仍写"保留的三个按钮：⏸ 暂停调度 / ⏭ 本轮跑完再停 / ▶ 继续调度"，★ 而 `:183-276` 实际只剩「启动脚本 / 停止脚本」⇒ ★ **注释过期**（同一处 bug 的另一面）| ⬜ **待修**（★ 用户 [10-15] 本轮只要求"**添加到台账**"）| ★ 修法（最小）：★ **删掉 `:1042-1058` 这个多余分支** —— ★ 依据 SPEC **§3.6 现行口径**只有三条：★ 暂停中行 `[▶]` 恢复 · ★ 运行中行 `[⏸]` 暂停 · ★ 未运行行 `[▶]` 描边 ⇒ ★ **设计里没有第 4 条**；★ 删后 `:1059` 自然可达。★ 守卫建议：★ 断言"**运行中行的 `[⏸]` 必须可达**"（★ 静态断言"相邻 `else if` 条件不得逐字重复"最省事，★ 且能防同类回归）。★ 验证：`flutter analyze lib` **0 error** + `flutter test` **158 passed** + ★★ **注入验证**（把删掉的分支塞回去 ⇒ 守卫必须变红）。★ 关联规则：SPEC **§1.4-Z3** · **§3.4-L3** · **§3.6-L3** · **分歧块③ 现行口径** |
 
 | **F10** | ★★ **[10-15] 本机（开发机 `D:\OAS-dev`）缺 C++ 工具链 ⇒ 前端只能 `analyze`+`test`，**不能 `build windows`** | ★ 实测：无 `vswhere` · 无 VS 目录 · 无 `Windows Kits\10\bin` · 无 `cmake`/`ninja` · **无 `winget`** ⇒ `flutter build windows --release` 报找不到 Visual Studio | ⬜ **待裁定**（★ 装 VS 2022 Build Tools ＋ `Microsoft.VisualStudio.Workload.VCTools` + Win10/11 SDK；★ 见后端台账 **§E-6** · 后端 `START-HERE` **P17**）| ★ 装好后：`build windows --release` 成功 + 产出 `oasx-live.exe`，且 `analyze` 仍 **0 error** / `test` 仍 **158 passed** |
@@ -62,13 +62,15 @@
 ## ★ 四、常用命令（★ 与后端 `DEV-WORKFLOW.md` 对齐）
 
 ```bat
-cd /d D:\OAS-dev\frontend
-D:\flutter3271\bin\flutter.bat --no-version-check analyze lib   REM ★ 期望 0 error（[10-15] 本机实测：0 error / 4 warning / 17 info）
-D:\flutter3271\bin\flutter.bat --no-version-check test          REM ★ 期望 158 passed（★ [10-15] 本机实测 158 passed）
-D:\flutter3271\bin\flutter.bat --no-version-check build windows --release
-REM   ★ ⚠ 必须带 `--no-version-check`：否则 flutter 对 SDK 仓库跑 `git fetch --tags`（611285 对象）挂死
+REM ★ [10-15] **去盘符**：用后端仓库里的包装脚本（★ 自动找 Flutter SDK + 自动补 --no-version-check）
+REM   ★ 相对路径：前端仓库的上一级就是工作区根（★ 见后端 docs/LAYOUT.md）
+..\backend\dev_tools\flutter.bat analyze lib      REM ★ 期望 0 error（[10-15] 实测：0 error / 4 warning / 17 info）
+..\backend\dev_tools\flutter.bat test             REM ★ 期望 158 passed（★ [10-15] 实测 158 passed）
+..\backend\dev_tools\flutter.bat build windows --release
 REM   ★ ⚠ 本机暂无 Visual Studio ⇒ build 不可用（★ 台账 F10 / 后端 P17）
-build\windows\x64\runner\Release\oasx-live.exe        REM ★ 开发前端
+build\windows\x64\runner\Release\oasx-live.exe    REM ★ 开发前端（★ 无盘符）
+REM   ★ 手敲原生命令时也必须带 `--no-version-check`：否则 flutter 对 SDK 仓库跑
+REM     `git fetch --tags`（611285 对象）挂死（★ 后端坑 P16）
 ```
 
 ★ **产物交接口**：★ 实机前端 = `D:\OAS-live\frontend\oasx-live.exe`
