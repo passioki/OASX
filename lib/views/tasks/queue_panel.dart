@@ -1039,23 +1039,22 @@ Widget _queueRow(BuildContext context, TaskListController c, int i) {
                               size: 18, color: Colors.green),
                         ),
                       )
-                    else if (isTask && e['running'] == true)
-                      Tooltip(
-                        message: '★ **恢复调度** —— 点它会**接着往下跑**。\n'
-                            '★ 同时把**播放头**设到这一条（从这里开始）。\n'
-                            '★ 队列顺序没有被改动过。',
-                        child: IconButton(
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(
-                              minWidth: 28, minHeight: 28),
-                          onPressed: c.playingEntry == true
-                              ? null
-                              : () => _playEntry(context, c, e),
-                          icon: const Icon(Icons.play_circle_filled,
-                              size: 18, color: Colors.green),
-                        ),
-                      )
+                    // ★★★ [10-15] F9 修复：这里原来有一段**多余的 `else if`** ★★★
+                    //
+                    // 它的条件与**下面那一行**（`[⏸] 暂停调度` 分支）**逐字相同**
+                    //   `isTask && e['running'] == true`
+                    // ⇒ 按 Dart 的 if/else 语义，**下面那一段永远不可达**
+                    // ⇒ ★ **`[⏸] 暂停调度` 从来不会显示** ——
+                    //   这正是用户报的"**恢复调度按钮缺少了暂停调度**"。
+                    //
+                    // ★ 为什么它是多余的（不是"删错了"）：
+                    //   "正在跑 **且** 调度已暂停" 的情况已经被**上面**那个分支
+                    //   （`isTask && c.schedulerPaused && e['running'] == true`）接走；
+                    //   走到这里的 `running == true` ⇒ **一定是"未暂停"**
+                    //   ⇒ 按 §3.6 现行口径就该显示 **[⏸] 暂停调度**。
+                    //   ⇒ ★ 删掉它，正好让本文件上方那张"三条互斥分支"表**成真**。
+                    // ★ 守卫：`test/task_list_panel_test.dart` 的
+                    //   `_f9PauseReachableTests()`（★ runtime 断言 `[⏸]` 真的渲染出来）
                     else if (isTask && e['running'] == true)
                       Tooltip(
                         message: '★ **暂停调度** —— 跑完**当前这一场**就停手。\n'

@@ -1462,6 +1462,96 @@ void main() {
 
   // ★★★ [10-14] N5：前端也要有【未完成台账】（★ 记忆外置）★★★
   _ledgerExistsTests();
+
+  // ★★★ [10-15] F9：[⏸] 暂停调度必须**真的可达** ★★★
+  _f9PauseReachableTests();
+}
+
+// ============================================================ F9 [10-15]
+//
+// ## ★★ 用户报的
+//
+// > "**恢复调度按钮缺少了暂停调度**"
+//
+// ## ★★ 真因 = 死代码（不是"忘了做"）
+//
+// `lib/views/tasks/queue_panel.dart` 里曾有两段**条件逐字相同**的 `else if`：
+//
+// ```
+// :1042  else if (isTask && e['running'] == true)   → [▶] 恢复调度
+// :1059  else if (isTask && e['running'] == true)   → [⏸] 暂停调度   ← 永不执行
+// ```
+//
+// ⇒ ★ Dart 的 `else if` 自上而下短路 ⇒ **后面那段完全被挡住**
+// ⇒ ★ 佐证：全文件 `pause_circle_filled` / `_pauseSchedule` 各**只有 1 处**
+//   （就是那段死代码里）⇒ ★ **界面上根本没有"暂停调度"入口**。
+//
+// ## ★ 修法（已做）
+//
+// ★ 删掉 `:1042-1058` 那一段（详见 `queue_panel.dart` 里的注释）。
+//   它在语义上本来就**多余**："正在跑 且 已暂停" 已被**上面**那个
+//   `c.schedulerPaused` 分支接走 ⇒ 走到 `running == true` 处必是**未暂停**
+//   ⇒ 按 `DESIGN-SPEC.md` §3.6「现行口径」就该显示 `[⏸]`。
+//
+// ## ★★ 为什么这条守卫必须是 **runtime（真渲染）**
+//
+// ★ 本项目已**三次**抓到"源码级守卫是空转的"（台账 §C.3 教训-C：
+//   "比行序"的守卫在 `if False:` 注入下**照样绿**）。
+//   ⇒ ★ 所以这里**真 pump 一次 `QueuePanel`**，直接找那个图标在不在。
+void _f9PauseReachableTests() {
+  testWidgets('★ F9：运行中那一行必须**真的渲染** [⏸] 暂停调度（可达性·真渲染）',
+      (tester) async {
+    final c = FakeTaskListController(
+      entries: [
+        {
+          'kind': 'task',
+          'task': 'DemonEncounter',
+          'entry_id': '20261015T2000-DemonEncounter',
+          // ★ 这一条"正在跑" —— 正是 F9 报的那个场景
+          'running': true,
+        },
+      ],
+      tasks: [taskRow('DemonEncounter', zh: '逢魔之时', queued: true)],
+    );
+    // ★ 前提：调度**没有**暂停 ⇒ 必走"运行中（未暂停）"那一支
+    expect(c.schedulerPaused, isFalse, reason: '前提：此处调度未暂停');
+
+    await tester.pumpWidget(wrapBounded(QueuePanel(controller: c)));
+    await tester.pump();
+
+    // ★★ 核心断言：暂停按钮**真的在**（修 F9 之前这里是 0 个）
+    expect(find.byIcon(Icons.pause_circle_filled), findsWidgets,
+        reason: '★ F9：运行中的那一行必须显示 [⏸] 暂停调度 —— '
+            '修前它被"条件重复的死分支"挡住 ⇒ 一个都不显示');
+    // ★ 反向：未暂停时**不该**出现"恢复调度"（绿 ▶）
+    expect(find.byIcon(Icons.play_circle_filled), findsNothing,
+        reason: '★ 未暂停时不该显示「恢复调度」（那说明走错了分支）');
+  });
+
+  testWidgets('★ F9 反向：调度已暂停 + 有在跑的那条 ⇒ 显示 [▶] 恢复调度（不是 [⏸]）',
+      (tester) async {
+    final c = FakeTaskListController(
+      entries: [
+        {
+          'kind': 'task',
+          'task': 'DemonEncounter',
+          'entry_id': '20261015T2000-DemonEncounter',
+          'running': true,
+        },
+      ],
+      tasks: [taskRow('DemonEncounter', zh: '逢魔之时', queued: true)],
+    );
+    c.schedulerPaused = true;
+
+    await tester.pumpWidget(wrapBounded(QueuePanel(controller: c)));
+    await tester.pump();
+
+    expect(find.byIcon(Icons.play_circle_filled), findsWidgets,
+        reason: '★ 已暂停 ⇒ 该条上应是「恢复调度」');
+    expect(find.byIcon(Icons.pause_circle_filled), findsNothing,
+        reason: '★ 已经暂停了就不该再给"暂停"（点了没有意义）—— '
+            '两条分支必须**互斥**');
+  });
 }
 
 // ============================================================ N5 前端台账
