@@ -18,6 +18,12 @@ import 'package:oasx/service/task_prefs.dart';
 import 'package:oasx/views/tasks/task_list_view.dart' show TaskListController;
 import 'package:oasx/config/theme.dart' show lightTheme, darkTheme;
 
+/// ★ [11-13] 本地存储初始化是否失败（失败 ⇒ **本次运行的设置不会保存**）。
+///
+/// 由 `initService()` 置位；UI 可据此提示用户。
+/// ⚠ 不要用 `GetStorage()` 去读这个状态 —— 存储本身可能正是坏掉的那个。
+bool storageInitFailed = false;
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initService();
@@ -137,9 +143,37 @@ Future<void> initService() async {
   await initLogger();
 
   try {
-    await GetStorage.init('GetStorage-live');   // ★ 实机版独立容器，避免与 Dev 版共用
+    // ★★★ [11-13] 容器必须与【所有消费方】一致 ★★★
+    //
+    // ## get_storage 2.1.1 的真实语义（源码 `storage_impl.dart:11-12 / 40-42`）
+    //   factory GetStorage([String container = 'GetStorage', ...])
+    //   static Future<bool> init([String container = 'GetStorage'])
+    // ⇒ `GetStorage()` **永远只用字面量默认值 `'GetStorage'`**，
+    //   **不会**跟随 `init('xxx')` 传入的容器名（2.1.1 里没有"当前容器"这个静态量）。
+    //
+    // ## 原来写 `init('GetStorage-live')` 造成的真故障（[11-13] 定位）
+    //   · init 打开的是 `Documents\GetStorage-live.gs`
+    //     —— 实测该文件**永远是 2 字节 `{}`**（没人往里写）
+    //   · 而 7 个消费方全是无参 `GetStorage()`：
+    //     `theme_service.dart:8` / `login_controller.dart:9` / `window_service.dart:11`
+    //     / `task_prefs.dart:203` / `settings.dart:15` / `script_service.dart:12`
+    //     / `locale_service.dart:13`
+    //     ⇒ 读写的是 `Documents\GetStorage.gs`（**用户的真实设置在这里**）
+    //   ⇒ **初始化一个盒子、全程用另一个盒子**。一旦那次启动 `Documents` 读写抖动
+    //     （历史 `PathAccessException errno=5`）或第二个实例抢文件锁，
+    //     `GetStorage.gs` 就退回空 ⇒ **白主题 + 要重填地址 + `rootPathServer` 空**
+    //     ⇒ `login_controller.dart:140` 直接 `return false` ⇒ **不自动拉起后端**。
+    //     （三条症状同源 —— 见 `docs/PENDING-LEDGER.md` N-启动 条目）
+    //
+    // ## 修法
+    //   init **默认容器**（= 用户数据本来就在的那个）⇒ 两个盒子合一、**零数据迁移**。
+    //   ⚠ 不要"顺手"改回带名字的容器：那会再次把 init 与消费方拆开。
+    await GetStorage.init();
   } catch (e) {
-    logger.w('GetStorage 初始化失败, 本次运行改用内存存储: $e');
+    // ★ 不能静默：降级成内存存储后，用户改的设置**不会保存**，
+    //   他必须知道"这次别指望设置留得住"，否则会以为是软件丢数据。
+    logger.e('GetStorage 初始化失败 ⇒ 本次运行的设置【不会保存】: $e');
+    storageInitFailed = true;
   }
 
   // ★ 任务列表的界面偏好（排序 / 筛选）现在才升级成**真落盘**。
