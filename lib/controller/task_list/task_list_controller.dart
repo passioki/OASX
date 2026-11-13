@@ -600,6 +600,23 @@ class TaskListController extends GetxController with LogMixin {
         //   （模式改由 `global_fields.priority_mode` 表达）。
       }
 
+      // ★ [11-13] 「循环轮数」也必须**从 `/schema` 读一次**。
+      //
+      // 根因：`loopTimes` 原来**永远从 0 开始**（`isLoopTimesLoaded` 只声明、零处使用），
+      // 而 `_NumberCell` 在 `value == 0` 时**显示为空**
+      // （`task_row_view.dart:599` `_text() => value > 0 ? '$value' : ''`）
+      // ⇒ 用户看到"循环轮数改完又变空"，且界面上永远看不到后端真实值（2/3/5）。
+      // ★ 与上面 `when_task_queue_empty` 同一手法：**只在首次**赋值，
+      //   否则用户刚改完、下次刷新又被 schema 打回去。
+      if (!isLoopTimesLoaded) {
+        final lt = schemaGlobalFields['loop_times'];
+        final cur = lt is Map ? lt['current'] : null;
+        if (cur is num) {
+          loopTimes = cur.toInt();
+          isLoopTimesLoaded = true;
+        }
+      }
+
       // 已编排 -> 顺序由 entries 决定; 未编排 -> 用后端给的默认顺序
       _applyFilter();
     } catch (e) {

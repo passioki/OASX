@@ -290,7 +290,7 @@ class _ArgumentViewState extends State<ArgumentView> {
   void onCheckboxChanged(bool? value) {
     setState(() {
       widget.setArgument(
-          "", "", widget.getGroupName(), model.title, 'boolean', value);
+          "", "", widget.getGroupName(), model.name, 'boolean', value);
       model.value = value;
     });
     showSnakbar(value);
@@ -298,19 +298,19 @@ class _ArgumentViewState extends State<ArgumentView> {
 
   void onStringChanged(String? value) {
     widget.setArgument(
-        "", "", widget.getGroupName(), model.title, 'string', value);
+        "", "", widget.getGroupName(), model.name, 'string', value);
     showSnakbar(value);
   }
 
   void onNumberChanged(String? value) {
     widget.setArgument(
-        "", "", widget.getGroupName(), model.title, 'number', value);
+        "", "", widget.getGroupName(), model.name, 'number', value);
     showSnakbar(value);
   }
 
   void onIntegerChanged(String? value) {
     widget.setArgument(
-        "", "", widget.getGroupName(), model.title, 'integer', value);
+        "", "", widget.getGroupName(), model.name, 'integer', value);
     showSnakbar(value);
   }
 
@@ -318,7 +318,7 @@ class _ArgumentViewState extends State<ArgumentView> {
     setState(() {
       model.value = value;
       widget.setArgument(
-          "", "", widget.getGroupName(), model.title, 'enum', value);
+          "", "", widget.getGroupName(), model.name, 'enum', value);
     });
     showSnakbar(value);
   }
@@ -327,7 +327,7 @@ class _ArgumentViewState extends State<ArgumentView> {
     setState(() {
       model.value = value;
       widget.setArgument(
-          "", "", widget.getGroupName(), model.title, 'date_time', value);
+          "", "", widget.getGroupName(), model.name, 'date_time', value);
     });
     showSnakbar(value);
   }
@@ -336,7 +336,7 @@ class _ArgumentViewState extends State<ArgumentView> {
     setState(() {
       model.value = value;
       widget.setArgument(
-          "", "", widget.getGroupName(), model.title, 'time_delta', value);
+          "", "", widget.getGroupName(), model.name, 'time_delta', value);
     });
     showSnakbar(value);
   }
@@ -345,7 +345,7 @@ class _ArgumentViewState extends State<ArgumentView> {
     setState(() {
       model.value = value;
       widget.setArgument(
-          "", "", widget.getGroupName(), model.title, 'time', value);
+          "", "", widget.getGroupName(), model.name, 'time', value);
     });
     showSnakbar(value);
   }

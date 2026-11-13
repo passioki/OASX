@@ -54,10 +54,23 @@ class ArgsController extends GetxController {
       config = navCtrl.selectedScript.value;
       task = navCtrl.selectedMenu.value;
     }
-    await ApiClient().putScriptArg(config, task, group, argument, type, value);
+    // ★ [11-13] **不许静默失败**：后端对未知字段/非法值会回 `false`
+    //   （`config_model.py:504-506`：`getattr` 取不到就 `return False`）。
+    //   原来这里把返回值直接丢掉、界面还弹「设置已保存」⇒ 用户以为改了、其实没改。
+    final ok = await ApiClient()
+        .putScriptArg(config, task, group, argument, type, value);
+    if (!ok) {
+      Get.snackbar(
+        '保存失败',
+        '后端没有接受这个值（字段：「$argument」）。\n'
+        '★ 若反复失败请截图这一条给开发。',
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 5),
+      );
+    }
     printInfo(
         info:
-            "setArgument config: $config, task: $task, group: $group, argument: $argument, value: $value");
+            "setArgument ok=$ok config: $config, task: $task, group: $group, argument: $argument, value: $value");
   }
 }
 
