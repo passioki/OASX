@@ -30,7 +30,26 @@ class SettingsController extends GetxController {
     getTemporaryDirectory().then((value) {
       temporaryDirectory = value.path;
       printInfo(info: 'New TemporaryDirectory : $temporaryDirectory');
-      storage.write('temporaryDirectory', temporaryDirectory);
+      // ★★★ [11-14] 这里原来有一句 `storage.write('temporaryDirectory', …)` ★★★
+      //
+      // ## 它就是"设置好后端位置、重启就丢"的**直接执行者**
+      //
+      // `get_storage` 每次 write 都是**整文件覆盖**（`GetStorage.gs`）。
+      // 而它写在**启动时无条件执行**：
+      //   · 若本次启动读存储失败/读到空（历史 `PathAccessException errno=5`、
+      //     或上一个实例还占着文件）⇒ 内存里是**空 map**
+      //   · 紧接着这行 write 就把「空 map + temporaryDirectory」落盘
+      //   ⇒ ★ **其它设置（`rootPathServer` / `address` / `dark` …）全部消失**
+      //
+      // 实机证据（[11-14]）：`GetStorage.gs` 从 175 B
+      // （含 rootPathServer/address/dark）变成 **66 B，只剩 temporaryDirectory**，
+      // 时间正好是那次启动。
+      //
+      // ## 为什么可以直接删掉
+      // `temporaryDirectory` 是**每次启动都能重新算出来**的临时目录，
+      // ★ **不需要持久化**：下面的 `getTemporaryDirectory()` 已经把它算好了。
+      // 删掉这次写 = 去掉一个"每次都覆盖全部设置"的危险动作。
+      // （读取那行保留：兼容旧数据，读到就用，读不到用 './'）
     });
   }
 
